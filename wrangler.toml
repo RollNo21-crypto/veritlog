@@ -1,0 +1,15 @@
+name = "veritlog"
+compatibility_date = "2024-04-05"
+compatibility_flags = ["nodejs_compat"]
+pages_build_output_dir = ".next"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "veritlog-d1"
+database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Placeholder
+migrations_dir = "drizzle"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "veritlog-storage"
+preview_bucket_name = "veritlog-storage-preview"

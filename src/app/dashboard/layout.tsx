@@ -1,0 +1,204 @@
+"use client";
+
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import {
+    LayoutDashboard,
+    FileText,
+    Users,
+    Mail,
+    BarChart3,
+    Settings,
+    Search,
+    Bell,
+    Plus,
+    Menu,
+    X
+} from "lucide-react";
+import { UserButton, useUser } from "@clerk/nextjs";
+import { useState } from "react";
+import { DarkModeToggle } from "~/components/dark-mode-toggle";
+
+const navigation = [
+    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+    { name: "Upload", href: "/dashboard/upload", icon: FileText },
+    { name: "Review Queue", href: "/dashboard/review", icon: FileText, badge: "22" },
+    { name: "Workspace", href: "/dashboard/workspace", icon: Users },
+    { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
+];
+
+const otherLinks = [
+    { name: "Email", href: "/dashboard/email", icon: Mail },
+    { name: "Reports", href: "/dashboard/reports", icon: BarChart3 },
+    { name: "Settings", href: "/dashboard/settings", icon: Settings },
+];
+
+export default function DashboardLayout({
+    children,
+}: {
+    children: React.ReactNode;
+}) {
+    const pathname = usePathname();
+    const [sidebarOpen, setSidebarOpen] = useState(false);
+    const { user } = useUser();
+
+    return (
+        <div className="flex h-screen overflow-hidden bg-background">
+            {/* Mobile Sidebar Overlay */}
+            {sidebarOpen && (
+                <div
+                    className="fixed inset-0 z-40 bg-background/80 backdrop-blur-sm lg:hidden"
+                    onClick={() => setSidebarOpen(false)}
+                />
+            )}
+
+            {/* Sidebar */}
+            <aside
+                className={`fixed inset-y-0 left-0 z-50 w-64 transform border-r border-border bg-card transition-transform duration-200 ease-in-out lg:static lg:translate-x-0 ${sidebarOpen ? "translate-x-0" : "-translate-x-full"
+                    }`}
+            >
+                {/* Logo */}
+                <div className="flex h-16 items-center justify-between border-b border-border px-6">
+                    <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center border border-border bg-background">
+                            <LayoutDashboard className="h-5 w-5 text-foreground" strokeWidth={1.5} />
+                        </div>
+                        <div>
+                            <div className="text-sm font-bold uppercase tracking-wider text-card-foreground">VERITLOG</div>
+                            <div className="text-xs text-muted-foreground">Tax Notices</div>
+                        </div>
+                    </div>
+                    <button
+                        onClick={() => setSidebarOpen(false)}
+                        className="lg:hidden"
+                    >
+                        <X className="h-5 w-5 text-muted-foreground" />
+                    </button>
+                </div>
+
+                {/* Navigation */}
+                <div className="flex h-[calc(100vh-4rem)] flex-col overflow-y-auto p-4">
+                    <div className="mb-6 flex-1">
+                        <div className="mb-3 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                            Main Menu
+                        </div>
+                        <nav className="space-y-1">
+                            {navigation.map((item) => {
+                                const Icon = item.icon;
+                                const isActive = pathname === item.href;
+                                return (
+                                    <Link
+                                        key={item.name}
+                                        href={item.href}
+                                        onClick={() => setSidebarOpen(false)}
+                                        className={`flex items-center justify-between border px-3 py-3 text-sm font-medium transition-colors ${isActive
+                                            ? "border-accent bg-accent text-accent-foreground"
+                                            : "border-border bg-background text-muted-foreground hover:border-accent hover:text-accent"
+                                            }`}
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            <Icon className="h-5 w-5" strokeWidth={1.5} />
+                                            <span>{item.name}</span>
+                                        </div>
+                                        {item.badge && (
+                                            <span className="border border-current px-2 py-0.5 text-xs font-bold">
+                                                {item.badge}
+                                            </span>
+                                        )}
+                                    </Link>
+                                );
+                            })}
+                        </nav>
+
+                        <div className="mt-6">
+                            <div className="mb-3 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                                Other
+                            </div>
+                            <nav className="space-y-1">
+                                {otherLinks.map((item) => {
+                                    const Icon = item.icon;
+                                    const isActive = pathname === item.href;
+                                    return (
+                                        <Link
+                                            key={item.name}
+                                            href={item.href}
+                                            onClick={() => setSidebarOpen(false)}
+                                            className={`flex items-center gap-3 border px-3 py-3 text-sm font-medium transition-colors ${isActive
+                                                ? "border-accent bg-accent text-white"
+                                                : "border-border bg-background text-muted-foreground hover:border-accent hover:text-accent"
+                                                }`}
+                                        >
+                                            <Icon className="h-5 w-5" strokeWidth={1.5} />
+                                            <span>{item.name}</span>
+                                        </Link>
+                                    );
+                                })}
+                            </nav>
+                        </div>
+                    </div>
+
+                    {/* User Profile */}
+                    <div className="border-t border-border pt-4">
+                        <div className="flex items-center gap-3 border border-border bg-background p-3 hover:border-foreground">
+                            <UserButton
+                                afterSignOutUrl="/"
+                                appearance={{
+                                    elements: {
+                                        avatarBox: "h-9 w-9 rounded-none"
+                                    }
+                                }}
+                            />
+                            <div className="flex-1 min-w-0">
+                                <div className="text-sm font-medium text-card-foreground truncate">
+                                    {user?.fullName || user?.firstName || "User"}
+                                </div>
+                                <div className="text-xs text-muted-foreground truncate">
+                                    {user?.primaryEmailAddress?.emailAddress || "user@example.com"}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </aside>
+
+            {/* Main Content */}
+            <div className="flex flex-1 flex-col overflow-hidden">
+                {/* Top Bar */}
+                <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 lg:px-6">
+                    <div className="flex flex-1 items-center gap-4">
+                        <button
+                            onClick={() => setSidebarOpen(true)}
+                            className="lg:hidden"
+                        >
+                            <Menu className="h-6 w-6 text-foreground" />
+                        </button>
+                        <div className="relative w-full max-w-md">
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <input
+                                type="search"
+                                placeholder="Search"
+                                className="w-full border border-border bg-background py-2 pl-10 pr-4 text-sm text-foreground placeholder:text-muted-foreground focus:border-foreground focus:outline-none"
+                            />
+                        </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                        <DarkModeToggle />
+                        <button className="relative border border-border bg-background p-2 hover:border-foreground">
+                            <Bell className="h-5 w-5 text-muted-foreground" />
+                            <span className="absolute right-1 top-1 h-2 w-2 bg-foreground"></span>
+                        </button>
+                        <button className="hidden items-center gap-2 border-2 border-accent bg-accent px-4 py-2 text-sm font-bold text-accent-foreground hover:bg-transparent hover:text-accent sm:flex">
+                            <Plus className="h-4 w-4" />
+                            <span>ADD WIDGET</span>
+                        </button>
+                    </div>
+                </header>
+
+                {/* Page Content */}
+                <main className="flex-1 overflow-y-auto bg-background p-4 lg:p-6">
+                    {children}
+                </main>
+            </div>
+        </div>
+    );
+}

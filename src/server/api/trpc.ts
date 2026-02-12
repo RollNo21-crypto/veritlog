@@ -1,14 +1,8 @@
-/**
- * YOU PROBABLY DON'T NEED TO EDIT THIS FILE, UNLESS:
- * 1. You want to modify request context (see Part 1).
- * 2. You want to create a new middleware or type of procedure (see Part 3).
- *
- * TL;DR - This is where all the tRPC server stuff is created and plugged in. The pieces you will
- * need to use are documented accordingly near the end.
- */
-import { initTRPC } from "@trpc/server";
+import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
+import { auth } from "@clerk/nextjs/server";
+import { createDb } from "~/server/db";
 
 /**
  * 1. CONTEXT
@@ -23,7 +17,16 @@ import { ZodError } from "zod";
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
+  const session = await auth();
+
+  // TODO: Fix D1 binding access for Cloudflare Pages
+  // For now, we assume process.env.DB or a global D1 binding is available
+  // In a real CF Pages app, we'd pass `platform.env.DB` from the generic handler
+  const db = createDb(process.env.DB as unknown as D1Database);
+
   return {
+    db,
+    session,
     ...opts,
   };
 };
@@ -101,3 +104,23 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
  * are logged in.
  */
 export const publicProcedure = t.procedure.use(timingMiddleware);
+
+/**
+ * Protected (authenticated) procedure
+ *
+ * If you want a query or mutation to ONLY be accessible to logged in users, use this. It verifies
+ * the session is valid and guarantees `ctx.session.userId` is present.
+ */
+export const protectedProcedure = t.procedure
+  .use(timingMiddleware)
+  .use(({ ctx, next }) => {
+    if (!ctx.session || !ctx.session.userId) {
+      throw new TRPCError({ code: "UNAUTHORIZED" });
+    }
+    return next({
+      ctx: {
+        // infers the `session` as non-nullable
+        session: { ...ctx.session, user: ctx.session.userId },
+      },
+    });
+  });
