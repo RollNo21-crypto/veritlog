@@ -103,7 +103,7 @@ Return ONLY valid JSON. If a field cannot be determined, use null.`,
         throw new Error(`OpenAI API error: ${response.statusText}`);
     }
 
-    const result = await response.json();
+    const result = await response.json() as { choices: { message: { content: string } }[] };
     const content = result.choices[0]?.message?.content;
 
     if (!content) {
@@ -139,7 +139,7 @@ function extractMockData(startTime: number): ExtractionResult {
             authority: "GST Department, Maharashtra",
             noticeType: "Show Cause Notice",
             amount: 250000,
-            deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0], // 30 days from now
+            deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0] ?? null, // 30 days from now
             section: "Section 74 of CGST Act, 2017",
             financialYear: "2023-24",
         },

@@ -1,21 +1,40 @@
 "use client";
 
-import { useState, useCallback } from "react";
-import { Upload, FileText, X } from "lucide-react";
+import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
+import { api } from "~/trpc/react";
+import { Upload, FileText, X, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
+import { Button } from "~/components/ui/button";
+import { Badge } from "~/components/ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
+
+interface UploadedFile {
+    file: File;
+    status: "pending" | "uploading" | "success" | "error";
+    noticeId?: string;
+    confidence?: string;
+    riskLevel?: string;
+    error?: string;
+}
 
 export default function UploadPage() {
-    const [files, setFiles] = useState<File[]>([]);
-    const [uploading, setUploading] = useState(false);
+    const [files, setFiles] = useState<UploadedFile[]>([]);
+    const uploadMutation = api.notice.upload.useMutation();
 
     const onDrop = useCallback((acceptedFiles: File[]) => {
-        setFiles((prev) => [...prev, ...acceptedFiles]);
+        const newFiles: UploadedFile[] = acceptedFiles.map((file) => ({
+            file,
+            status: "pending" as const,
+        }));
+        setFiles((prev) => [...prev, ...newFiles]);
     }, []);
 
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
         accept: {
             "application/pdf": [".pdf"],
+            "image/jpeg": [".jpg", ".jpeg"],
+            "image/png": [".png"],
         },
         multiple: true,
     });
@@ -25,13 +44,57 @@ export default function UploadPage() {
     };
 
     const handleUpload = async () => {
-        if (files.length === 0) return;
+        for (let i = 0; i < files.length; i++) {
+            const uploadFile = files[i];
+            if (!uploadFile || uploadFile.status !== "pending") continue;
 
-        setUploading(true);
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-        setUploading(false);
-        setFiles([]);
+            // Mark as uploading
+            setFiles((prev) =>
+                prev.map((f, idx) => (idx === i ? { ...f, status: "uploading" as const } : f))
+            );
+
+            try {
+                // Convert file to base64 for now (will be replaced with R2 direct upload)
+                const base64 = await fileToBase64(uploadFile.file);
+
+                const result = await uploadMutation.mutateAsync({
+                    fileName: uploadFile.file.name,
+                    fileSize: uploadFile.file.size,
+                    fileType: uploadFile.file.type,
+                    fileData: base64,
+                });
+
+                setFiles((prev) =>
+                    prev.map((f, idx) =>
+                        idx === i
+                            ? {
+                                ...f,
+                                status: "success" as const,
+                                noticeId: result.noticeId,
+                                confidence: result.confidence,
+                                riskLevel: result.riskLevel,
+                            }
+                            : f
+                    )
+                );
+            } catch (err) {
+                setFiles((prev) =>
+                    prev.map((f, idx) =>
+                        idx === i
+                            ? {
+                                ...f,
+                                status: "error" as const,
+                                error: err instanceof Error ? err.message : "Upload failed",
+                            }
+                            : f
+                    )
+                );
+            }
+        }
     };
+
+    const pendingCount = files.filter((f) => f.status === "pending").length;
+    const uploadingCount = files.filter((f) => f.status === "uploading").length;
 
     return (
         <div className="space-y-6">
@@ -39,117 +102,149 @@ export default function UploadPage() {
             <div className="border-b border-border pb-4">
                 <h1 className="text-3xl font-bold uppercase tracking-tight text-foreground">Upload Notices</h1>
                 <p className="mt-1 text-sm text-muted-foreground">
-                    Upload tax notice PDFs for AI-powered extraction
+                    Upload tax notice documents for AI-powered extraction and processing
                 </p>
             </div>
 
-            {/* Upload Area */}
-            <div className="border border-border bg-card p-6">
-                <div
-                    {...getRootProps()}
-                    className={`cursor-pointer border-2 border-dashed p-16 text-center transition-colors ${isDragActive
-                        ? "border-foreground bg-muted"
-                        : "border-border hover:border-foreground"
-                        }`}
-                >
-                    <input {...getInputProps()} />
-                    <div className="mx-auto flex max-w-md flex-col items-center gap-6">
-                        <div className="flex h-20 w-20 items-center justify-center border border-border bg-background">
-                            <Upload className="h-10 w-10 text-foreground" strokeWidth={1.5} />
-                        </div>
-                        <div>
-                            <p className="text-xl font-bold uppercase tracking-tight text-card-foreground">
-                                {isDragActive ? "Drop files here" : "Drag & drop PDF files"}
-                            </p>
-                            <p className="mt-2 text-sm text-muted-foreground">
-                                or click to browse your files
-                            </p>
-                        </div>
-                        <div className="border border-border bg-background px-4 py-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                            PDF Only
-                        </div>
+            {/* Drop Zone */}
+            <Card>
+                <CardContent className="pt-6">
+                    <div
+                        {...getRootProps()}
+                        className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${isDragActive
+                                ? "border-primary bg-primary/5"
+                                : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
+                            }`}
+                    >
+                        <input {...getInputProps()} />
+                        <Upload className="mb-4 h-12 w-12 text-muted-foreground" />
+                        {isDragActive ? (
+                            <p className="text-lg font-medium text-primary">Drop the files here...</p>
+                        ) : (
+                            <>
+                                <p className="text-lg font-medium text-foreground">
+                                    Drag & drop notice documents here
+                                </p>
+                                <p className="mt-1 text-sm text-muted-foreground">
+                                    or click to browse — PDF, JPG, PNG accepted
+                                </p>
+                            </>
+                        )}
                     </div>
-                </div>
-            </div>
+                </CardContent>
+            </Card>
 
             {/* File List */}
             {files.length > 0 && (
-                <div className="border border-border bg-card p-6">
-                    <div className="mb-4 flex items-center justify-between border-b border-border pb-4">
-                        <h3 className="text-lg font-bold uppercase tracking-tight text-card-foreground">
-                            Selected Files ({files.length})
-                        </h3>
-                        <button
-                            onClick={handleUpload}
-                            disabled={uploading}
-                            className="flex items-center gap-2 border-2 border-accent bg-accent px-6 py-2 text-sm font-bold uppercase tracking-wider text-accent-foreground hover:bg-transparent hover:text-accent disabled:opacity-50"
-                        >
-                            {uploading ? (
-                                <>
-                                    <div className="h-4 w-4 animate-spin border-2 border-current border-t-transparent" />
-                                    Uploading...
-                                </>
-                            ) : (
-                                <>
-                                    <Upload className="h-4 w-4" />
-                                    Upload All
-                                </>
-                            )}
-                        </button>
-                    </div>
-                    <div className="space-y-2">
-                        {files.map((file, index) => (
-                            <div
-                                key={index}
-                                className="flex items-center justify-between border border-border bg-background p-4"
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className="flex h-10 w-10 items-center justify-center border border-border bg-card">
-                                        <FileText className="h-5 w-5 text-foreground" strokeWidth={1.5} />
-                                    </div>
-                                    <div>
-                                        <p className="text-sm font-medium text-foreground">
-                                            {file.name}
-                                        </p>
-                                        <p className="text-xs text-muted-foreground">
-                                            {(file.size / 1024 / 1024).toFixed(2)} MB
-                                        </p>
-                                    </div>
-                                </div>
-                                <button
-                                    onClick={() => removeFile(index)}
-                                    className="border border-border bg-background p-2 text-muted-foreground hover:border-foreground hover:text-foreground"
+                <Card>
+                    <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                        <div>
+                            <CardTitle className="text-lg">Uploaded Files</CardTitle>
+                            <CardDescription>
+                                {pendingCount > 0 && `${pendingCount} pending · `}
+                                {files.filter((f) => f.status === "success").length} processed
+                            </CardDescription>
+                        </div>
+                        {pendingCount > 0 && (
+                            <Button onClick={handleUpload} disabled={uploadingCount > 0}>
+                                {uploadingCount > 0 ? (
+                                    <>
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                        Processing...
+                                    </>
+                                ) : (
+                                    <>
+                                        <Upload className="mr-2 h-4 w-4" />
+                                        Process {pendingCount} File{pendingCount > 1 ? "s" : ""}
+                                    </>
+                                )}
+                            </Button>
+                        )}
+                    </CardHeader>
+                    <CardContent>
+                        <div className="space-y-3">
+                            {files.map((uploadedFile, index) => (
+                                <div
+                                    key={index}
+                                    className="flex items-center justify-between rounded-lg border border-border bg-card p-3"
                                 >
-                                    <X className="h-4 w-4" />
-                                </button>
-                            </div>
-                        ))}
-                    </div>
-                </div>
+                                    <div className="flex items-center gap-3">
+                                        {uploadedFile.status === "uploading" ? (
+                                            <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                                        ) : uploadedFile.status === "success" ? (
+                                            <CheckCircle className="h-5 w-5 text-green-500" />
+                                        ) : uploadedFile.status === "error" ? (
+                                            <AlertTriangle className="h-5 w-5 text-destructive" />
+                                        ) : (
+                                            <FileText className="h-5 w-5 text-muted-foreground" />
+                                        )}
+
+                                        <div>
+                                            <p className="text-sm font-medium text-foreground">
+                                                {uploadedFile.file.name}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">
+                                                {(uploadedFile.file.size / 1024).toFixed(1)} KB
+                                                {uploadedFile.confidence && (
+                                                    <> · Confidence: <Badge variant={uploadedFile.confidence === "high" ? "default" : uploadedFile.confidence === "medium" ? "secondary" : "destructive"} className="ml-1 text-xs">{uploadedFile.confidence}</Badge></>
+                                                )}
+                                                {uploadedFile.riskLevel && (
+                                                    <> · Risk: <Badge variant={uploadedFile.riskLevel === "high" ? "destructive" : uploadedFile.riskLevel === "medium" ? "secondary" : "outline"} className="ml-1 text-xs">{uploadedFile.riskLevel}</Badge></>
+                                                )}
+                                            </p>
+                                            {uploadedFile.error && (
+                                                <p className="text-xs text-destructive">{uploadedFile.error}</p>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {uploadedFile.status === "pending" && (
+                                        <Button
+                                            variant="ghost"
+                                            size="sm"
+                                            onClick={() => removeFile(index)}
+                                        >
+                                            <X className="h-4 w-4" />
+                                        </Button>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </CardContent>
+                </Card>
             )}
 
             {/* Email Forwarding Info */}
-            <div className="border border-border bg-card p-6">
-                <div className="flex items-start gap-4">
-                    <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center border border-border bg-background">
-                        <FileText className="h-6 w-6 text-foreground" strokeWidth={1.5} />
-                    </div>
-                    <div className="flex-1">
-                        <h3 className="mb-3 text-lg font-bold uppercase tracking-tight text-card-foreground">
-                            Email Forwarding
-                        </h3>
-                        <p className="mb-4 text-sm text-muted-foreground">
-                            You can also forward tax notice emails directly to:
+            <Card>
+                <CardHeader>
+                    <CardTitle className="text-lg">Email Forwarding</CardTitle>
+                    <CardDescription>
+                        Automatically ingest notices by forwarding them to your unique address
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    <div className="rounded-lg bg-muted p-4">
+                        <p className="text-sm font-medium text-foreground">
+                            Forward notices to:
                         </p>
-                        <div className="border border-border bg-background px-4 py-3 font-mono text-sm text-foreground">
-                            notices@veritlog.app
-                        </div>
-                        <p className="mt-4 text-xs text-muted-foreground">
-                            Emails will be automatically processed and added to your review queue
+                        <code className="mt-1 block text-sm text-primary">
+                            notices-your-org@ingest.veritlog.in
+                        </code>
+                        <p className="mt-2 text-xs text-muted-foreground">
+                            Attachments are automatically extracted and processed with the same AI pipeline.
                         </p>
                     </div>
-                </div>
-            </div>
+                </CardContent>
+            </Card>
         </div>
     );
+}
+
+function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+    });
 }

@@ -19,13 +19,27 @@ import { createDb } from "~/server/db";
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const session = await auth();
 
-  // TODO: Fix D1 binding access for Cloudflare Pages
-  // For now, we assume process.env.DB or a global D1 binding is available
-  // In a real CF Pages app, we'd pass `platform.env.DB` from the generic handler
-  const db = createDb(process.env.DB as unknown as D1Database);
+  // Access Cloudflare bindings at runtime. In Cloudflare Pages the bindings
+  // are available via `getRequestContext()`. In local Next.js dev they won't
+  // exist, so we fall back gracefully to null/undefined.
+  let db: ReturnType<typeof createDb>;
+  let r2: R2Bucket | null = null;
+
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const { getRequestContext } = require("@cloudflare/next-on-pages");
+    const ctx = getRequestContext();
+    db = createDb(ctx.env.DB as D1Database);
+    r2 = (ctx.env.R2 as R2Bucket) ?? null;
+  } catch {
+    // Local dev — use process.env.DB shim (won't run real queries without wrangler)
+    db = createDb(process.env.DB as unknown as D1Database);
+    r2 = null;
+  }
 
   return {
     db,
+    r2,
     session,
     ...opts,
   };
