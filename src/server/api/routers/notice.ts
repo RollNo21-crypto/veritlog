@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { extractNoticeData } from "~/server/services/extraction";
-import { uploadToR2, dataUrlToBuffer, getFileViewUrl } from "~/server/services/storage";
+import { uploadToS3, dataUrlToBuffer, getFileViewUrl } from "~/server/services/storage";
 import { notices } from "~/server/db/schema";
 import { eq, and, isNull, desc } from "drizzle-orm";
 
@@ -49,22 +49,22 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const fileKey = `${tenantId}/${noticeId}/${input.fileName}`;
 
-            // Upload file to R2 (falls back to placeholder URL in local dev)
+            // Upload file to S3 (private bucket, accessed via presigned URL or proxy)
             let fileUrl: string;
             let fileHash: string = "";
             if (input.fileData.startsWith("data:")) {
                 const { buffer, contentType } = dataUrlToBuffer(input.fileData);
-                const r2Result = await uploadToR2(ctx.r2, fileKey, buffer, contentType);
+                const s3Result = await uploadToS3(fileKey, buffer, contentType);
                 fileUrl = getFileViewUrl(noticeId); // Use proxy route for secure access
-                fileHash = r2Result.fileHash;
+                fileHash = s3Result.fileHash;
             } else {
                 // Already a URL (e.g., email attachment previously uploaded)
                 fileUrl = input.fileData;
@@ -124,7 +124,7 @@ export const noticeRouter = createTRPCRouter({
                 .optional()
         )
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
                 return [];
             }
@@ -156,9 +156,9 @@ export const noticeRouter = createTRPCRouter({
     getById: protectedProcedure
         .input(z.object({ id: z.string() }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const result = await ctx.db
@@ -193,9 +193,9 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const { id, ...updates } = input;
@@ -235,11 +235,11 @@ export const noticeRouter = createTRPCRouter({
     verify: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             const userId = ctx.session.userId;
 
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             await ctx.db
@@ -266,9 +266,9 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const updateData: Record<string, unknown> = {
@@ -301,9 +301,9 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             await ctx.db
@@ -328,8 +328,8 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
-            if (!tenantId) throw new Error("No organization selected");
+            const tenantId = ctx.session.orgId || ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
 
             await ctx.db
                 .update(notices)
@@ -352,9 +352,9 @@ export const noticeRouter = createTRPCRouter({
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             await ctx.db
@@ -372,7 +372,7 @@ export const noticeRouter = createTRPCRouter({
      * Dashboard stats for current tenant
      */
     stats: protectedProcedure.query(async ({ ctx }) => {
-        const tenantId = ctx.session.orgId;
+        const tenantId = ctx.session.orgId || ctx.session.userId;
         if (!tenantId) {
             return { total: 0, reviewNeeded: 0, processing: 0, verified: 0, inProgress: 0, closed: 0, highRisk: 0 };
         }

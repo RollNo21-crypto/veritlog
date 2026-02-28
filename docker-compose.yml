@@ -1,0 +1,49 @@
+# Local development stack for VERITLOG on AWS
+# Simulates: RDS PostgreSQL + S3 (via LocalStack)
+#
+# Usage:
+#   docker-compose up -d
+#   Then set in .env:
+#     DATABASE_URL=postgresql://veritlog:password@localhost:5432/veritlog
+#     AWS_ENDPOINT_URL=http://localhost:4566   (LocalStack S3)
+#     AWS_ACCESS_KEY_ID=test
+#     AWS_SECRET_ACCESS_KEY=test
+#     AWS_REGION=ap-south-1
+#     S3_BUCKET_NAME=veritlog-storage
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: veritlog-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: veritlog
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: veritlog
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U veritlog"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  localstack:
+    image: localstack/localstack:latest
+    container_name: veritlog-localstack
+    restart: unless-stopped
+    environment:
+      - SERVICES=s3
+      - AWS_DEFAULT_REGION=ap-south-1
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack_data:/var/lib/localstack
+      # Auto-create the S3 bucket on startup
+      - ./scripts/localstack-init.sh:/etc/localstack/init/ready.d/init.sh
+
+volumes:
+  postgres_data:
+  localstack_data:

@@ -1,75 +1,95 @@
 /**
- * R2 Storage Service
- * Handles file upload/download to/from Cloudflare R2.
+ * S3 Storage Service — AWS S3 (replaces Cloudflare R2)
+ * Handles file upload/download/presigned URLs via @aws-sdk.
  *
- * In Cloudflare Pages, R2 is accessed via `platform.env.R2`.
- * For local dev, files are stored as base64 data URLs (no R2 needed).
+ * Configuration is via environment variables:
+ *   AWS_REGION, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_BUCKET_NAME
  */
 
-export interface R2UploadResult {
+import { S3Client, DeleteObjectCommand, GetObjectCommand } from "@aws-sdk/client-s3";
+import { Upload } from "@aws-sdk/lib-storage";
+import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
+
+export interface S3UploadResult {
     fileUrl: string;
     fileKey: string;
     fileHash: string;
 }
 
 /**
- * Upload a file buffer to R2 and return its public URL.
- * Falls back to a data URL approach when R2 is unavailable (local dev).
+ * Singleton S3 client — configured from env vars at module load time.
  */
-export async function uploadToR2(
-    r2: R2Bucket | null | undefined,
+const s3 = new S3Client({
+    region: process.env.AWS_REGION ?? "ap-south-1",
+    credentials: {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+    },
+});
+
+const BUCKET = process.env.S3_BUCKET_NAME!;
+
+/**
+ * Upload a file buffer to S3 and return metadata.
+ * Uses multipart upload via `@aws-sdk/lib-storage` for reliability on large files.
+ */
+export async function uploadToS3(
     fileKey: string,
     fileBuffer: ArrayBuffer,
     contentType: string
-): Promise<R2UploadResult> {
+): Promise<S3UploadResult> {
     // Compute SHA-256 hash for integrity tracking (NFR13)
     const hashBuffer = await crypto.subtle.digest("SHA-256", fileBuffer);
     const hashArray = Array.from(new Uint8Array(hashBuffer));
     const fileHash = hashArray.map((b) => b.toString(16).padStart(2, "0")).join("");
 
-    if (r2) {
-        // Production: store on Cloudflare R2
-        await r2.put(fileKey, fileBuffer, {
-            httpMetadata: { contentType },
-            customMetadata: { sha256: fileHash },
-        });
+    const upload = new Upload({
+        client: s3,
+        params: {
+            Bucket: BUCKET,
+            Key: fileKey,
+            Body: Buffer.from(fileBuffer),
+            ContentType: contentType,
+            Metadata: { sha256: fileHash },
+            // Objects are private by default — access via presigned URLs or proxy
+        },
+    });
 
-        // R2 public URL — requires a custom domain or R2 public access configured
-        const fileUrl = `https://storage.veritlog.in/${fileKey}`;
+    await upload.done();
 
-        return { fileUrl, fileKey, fileHash };
-    } else {
-        // Development fallback — return a placeholder URL
-        console.warn("[R2] No R2 binding found. Using placeholder URL for dev.");
-        const fileUrl = `data:${contentType};base64-placeholder/${fileKey}`;
-        return { fileUrl, fileKey, fileHash };
-    }
+    // Files are private; access is via the proxy route or presigned URLs
+    const fileUrl = `/api/files/${encodeURIComponent(fileKey)}`;
+
+    return { fileUrl, fileKey, fileHash };
 }
 
 /**
- * Delete a file from R2 (for hard deletes, e.g. test cleanup only).
+ * Delete a file from S3 (for hard deletes, e.g. test cleanup only).
  * In production, use soft-deletes on the DB record instead.
  */
-export async function deleteFromR2(
-    r2: R2Bucket | null | undefined,
-    fileKey: string
-): Promise<void> {
-    if (r2) {
-        await r2.delete(fileKey);
-    }
+export async function deleteFromS3(fileKey: string): Promise<void> {
+    await s3.send(new DeleteObjectCommand({ Bucket: BUCKET, Key: fileKey }));
 }
 
 /**
- * Generate a signed/temporary URL for viewing a file.
- * R2 doesn't natively support presigned URLs yet, so we proxy through a
- * Next.js API route that validates Clerk session before streaming.
+ * Generate a presigned URL for secure, time-limited direct access to a file.
+ * Expires in 1 hour by default.
+ */
+export async function getPresignedUrl(fileKey: string, expiresInSeconds = 3600): Promise<string> {
+    const command = new GetObjectCommand({ Bucket: BUCKET, Key: fileKey });
+    return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+}
+
+/**
+ * Return the internal proxy URL for viewing a file through the Next.js API route.
+ * The API route validates Clerk session before retrieving from S3.
  */
 export function getFileViewUrl(noticeId: string): string {
     return `/api/files/${noticeId}`;
 }
 
 /**
- * Convert a base64 data URL to an ArrayBuffer for R2 upload.
+ * Convert a base64 data URL to an ArrayBuffer for S3 upload.
  */
 export function dataUrlToBuffer(dataUrl: string): { buffer: ArrayBuffer; contentType: string } {
     const [header, base64Data] = dataUrl.split(",");
@@ -77,7 +97,7 @@ export function dataUrlToBuffer(dataUrl: string): { buffer: ArrayBuffer; content
     const binaryStr = atob(base64Data ?? "");
     const bytes = new Uint8Array(binaryStr.length);
     for (let i = 0; i < binaryStr.length; i++) {
-        bytes[i] = binaryStr.charCodeAt(i);
+        bytes[i] = binaryStr.charCodeAt(i)!;
     }
     return { buffer: bytes.buffer, contentType };
 }

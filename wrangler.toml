@@ -6,7 +6,7 @@ pages_build_output_dir = ".next"
 [[d1_databases]]
 binding = "DB"
 database_name = "veritlog-d1"
-database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" # Placeholder
+database_id = "a1967b20-4db6-4584-916c-c5422d184ce6"
 migrations_dir = "drizzle"
 
 [[r2_buckets]]

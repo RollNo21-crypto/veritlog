@@ -1,18 +1,16 @@
 import { sql } from "drizzle-orm";
-import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { pgTable, text, integer, timestamp } from "drizzle-orm/pg-core";
 
 // ─── Tenants (CA Firms) ───────────────────────────────────────────────────────
-export const tenants = sqliteTable("tenants", {
+export const tenants = pgTable("tenants", {
     id: text("id").primaryKey(), // Clerk Org ID
     name: text("name").notNull(),
     plan: text("plan").notNull().default("free"),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Clients (Business entities managed by a CA) ──────────────────────────────
-export const clients = sqliteTable("clients", {
+export const clients = pgTable("clients", {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id")
         .notNull()
@@ -23,16 +21,12 @@ export const clients = sqliteTable("clients", {
     contactName: text("contact_name"),
     contactEmail: text("contact_email"),
     contactPhone: text("contact_phone"),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // ─── Notices (Core domain entity) ─────────────────────────────────────────────
-export const notices = sqliteTable("notices", {
+export const notices = pgTable("notices", {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id")
         .notNull()
@@ -65,24 +59,20 @@ export const notices = sqliteTable("notices", {
     source: text("source").notNull().default("upload"), // "upload" | "email"
     assignedTo: text("assigned_to"), // Clerk user ID
     verifiedBy: text("verified_by"), // Clerk user ID
-    verifiedAt: integer("verified_at", { mode: "timestamp" }),
-    closedAt: integer("closed_at", { mode: "timestamp" }),
+    verifiedAt: timestamp("verified_at"),
+    closedAt: timestamp("closed_at"),
     closedBy: text("closed_by"),
 
     // Soft delete (NFR12 — 7-year retention)
-    deletedAt: integer("deleted_at", { mode: "timestamp" }),
+    deletedAt: timestamp("deleted_at"),
 
     // Timestamps
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
-    updatedAt: integer("updated_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
 // ─── Notice Comments ──────────────────────────────────────────────────────────
-export const comments = sqliteTable("comments", {
+export const comments = pgTable("comments", {
     id: text("id").primaryKey(),
     noticeId: text("notice_id")
         .notNull()
@@ -92,13 +82,11 @@ export const comments = sqliteTable("comments", {
         .references(() => tenants.id),
     userId: text("user_id").notNull(), // Clerk user ID
     content: text("content").notNull(),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Notice Attachments (proof of filing / response docs) ─────────────────────
-export const attachments = sqliteTable("attachments", {
+export const attachments = pgTable("attachments", {
     id: text("id").primaryKey(),
     noticeId: text("notice_id")
         .notNull()
@@ -111,13 +99,11 @@ export const attachments = sqliteTable("attachments", {
     fileUrl: text("file_url").notNull(),
     fileSize: integer("file_size"),
     fileHash: text("file_hash"),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
 // ─── Audit Logs (Immutable, append-only) ──────────────────────────────────────
-export const auditLogs = sqliteTable("audit_logs", {
+export const auditLogs = pgTable("audit_logs", {
     id: text("id").primaryKey(),
     tenantId: text("tenant_id")
         .notNull()
@@ -131,7 +117,5 @@ export const auditLogs = sqliteTable("audit_logs", {
     previousValue: text("previous_value"), // JSON string of old values
     newValue: text("new_value"), // JSON string of new values
     ipAddress: text("ip_address"),
-    createdAt: integer("created_at", { mode: "timestamp" })
-        .default(sql`(unixepoch())`)
-        .notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
 });

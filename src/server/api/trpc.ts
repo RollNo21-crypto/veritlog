@@ -2,44 +2,22 @@ import { initTRPC, TRPCError } from "@trpc/server";
 import superjson from "superjson";
 import { ZodError } from "zod";
 import { auth } from "@clerk/nextjs/server";
-import { createDb } from "~/server/db";
+import { db } from "~/server/db";
 
 /**
  * 1. CONTEXT
  *
- * This section defines the "contexts" that are available in the backend API.
- *
- * These allow you to access things when processing a request, like the database, the session, etc.
- *
- * This helper generates the "internals" for a tRPC context. The API handler and RSC clients each
- * wrap this and provides the required context.
+ * AWS/standard Node.js context — no Cloudflare binding injection needed.
+ * `db` is a module-level singleton (postgres-js + drizzle) from ~/server/db.
+ * Storage (S3) is also a stateless singleton in ~/server/services/storage.
  *
  * @see https://trpc.io/docs/server/context
  */
 export const createTRPCContext = async (opts: { headers: Headers }) => {
   const session = await auth();
 
-  // Access Cloudflare bindings at runtime. In Cloudflare Pages the bindings
-  // are available via `getRequestContext()`. In local Next.js dev they won't
-  // exist, so we fall back gracefully to null/undefined.
-  let db: ReturnType<typeof createDb>;
-  let r2: R2Bucket | null = null;
-
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { getRequestContext } = require("@cloudflare/next-on-pages");
-    const ctx = getRequestContext();
-    db = createDb(ctx.env.DB as D1Database);
-    r2 = (ctx.env.R2 as R2Bucket) ?? null;
-  } catch {
-    // Local dev — use process.env.DB shim (won't run real queries without wrangler)
-    db = createDb(process.env.DB as unknown as D1Database);
-    r2 = null;
-  }
-
   return {
     db,
-    r2,
     session,
     ...opts,
   };
@@ -48,9 +26,8 @@ export const createTRPCContext = async (opts: { headers: Headers }) => {
 /**
  * 2. INITIALIZATION
  *
- * This is where the tRPC API is initialized, connecting the context and transformer. We also parse
- * ZodErrors so that you get typesafety on the frontend if your procedure fails due to validation
- * errors on the backend.
+ * tRPC API initialization — connects context and transformer.
+ * ZodErrors are parsed so the frontend gets typesafe validation errors.
  */
 const t = initTRPC.context<typeof createTRPCContext>().create({
   transformer: superjson,
@@ -89,9 +66,6 @@ export const createTRPCRouter = t.router;
 
 /**
  * Middleware for timing procedure execution and adding an artificial delay in development.
- *
- * You can remove this if you don't like it, but it can help catch unwanted waterfalls by simulating
- * network latency that would occur in production but not in local development.
  */
 const timingMiddleware = t.middleware(async ({ next, path }) => {
   const start = Date.now();
@@ -112,18 +86,13 @@ const timingMiddleware = t.middleware(async ({ next, path }) => {
 
 /**
  * Public (unauthenticated) procedure
- *
- * This is the base piece you use to build new queries and mutations on your tRPC API. It does not
- * guarantee that a user querying is authorized, but you can still access user session data if they
- * are logged in.
  */
 export const publicProcedure = t.procedure.use(timingMiddleware);
 
 /**
  * Protected (authenticated) procedure
  *
- * If you want a query or mutation to ONLY be accessible to logged in users, use this. It verifies
- * the session is valid and guarantees `ctx.session.userId` is present.
+ * Verifies the Clerk session is valid before allowing access.
  */
 export const protectedProcedure = t.procedure
   .use(timingMiddleware)

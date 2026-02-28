@@ -19,9 +19,9 @@ export const clientRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const clientId = `client_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -41,7 +41,7 @@ export const clientRouter = createTRPCRouter({
      * List all clients for current tenant
      */
     list: protectedProcedure.query(async ({ ctx }) => {
-        const tenantId = ctx.session.orgId;
+        const tenantId = ctx.session.orgId || ctx.session.userId;
         if (!tenantId) {
             return [];
         }
@@ -59,9 +59,9 @@ export const clientRouter = createTRPCRouter({
     getById: protectedProcedure
         .input(z.object({ id: z.string() }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const result = await ctx.db
@@ -89,9 +89,9 @@ export const clientRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             const { id, ...updates } = input;
@@ -110,9 +110,9 @@ export const clientRouter = createTRPCRouter({
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.orgId || ctx.session.userId;
             if (!tenantId) {
-                throw new Error("No organization selected");
+                throw new Error("No organization or user selected");
             }
 
             await ctx.db

@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from "next/server";
  * Email Ingestion Webhook (Epic 1 — FR2, FR3)
  *
  * Receives webhooks from SendGrid / Mailgun Inbound Parse.
- * Processes attachments (PDFs), uploads to R2, runs AI extraction,
+ * Processes attachments (PDFs), uploads to S3, runs AI extraction,
  * and creates Notice records automatically.
  *
  * Security: Verify provider webhook signature before processing.
@@ -41,30 +41,15 @@ export async function POST(req: NextRequest) {
 
         console.log("[Email] Received:", { from, subject, tenantId, attachmentCount: Array.isArray(attachments) ? attachments.length : 0 });
 
-        // ─── Get Cloudflare bindings ──────────────────────────────────────
-        let r2: R2Bucket | null = null;
-        let db: D1Database | null = null;
-
-        try {
-            // eslint-disable-next-line @typescript-eslint/no-require-imports
-            const { getRequestContext } = require("@cloudflare/next-on-pages");
-            const ctx = getRequestContext();
-            r2 = ctx.env.R2 as R2Bucket;
-            db = ctx.env.DB as D1Database;
-        } catch {
-            console.warn("[Email] Running in local dev — no CF bindings");
-        }
-
         // ─── Process each PDF attachment ──────────────────────────────────
         const processedNotices: string[] = [];
 
         if (Array.isArray(attachments) && attachments.length > 0) {
-            const { uploadToR2, getFileViewUrl } = await import("~/server/services/storage");
+            // AWS: storage is a stateless S3 singleton — no binding injection needed
+            const { uploadToS3, getFileViewUrl } = await import("~/server/services/storage");
             const { extractNoticeData } = await import("~/server/services/extraction");
-            const { createDb } = await import("~/server/db");
+            const { db } = await import("~/server/db");
             const { notices: noticesTable } = await import("~/server/db/schema");
-
-            const drizzle = db ? createDb(db) : null;
 
             for (const attachment of attachments) {
                 // Only process PDF / image attachments
@@ -76,14 +61,14 @@ export async function POST(req: NextRequest) {
                     const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                     const fileKey = `${tenantId}/${noticeId}/${attachment.name}`;
 
-                    // Decode base64 content and upload to R2
+                    // Decode base64 content and upload to S3
                     const binaryStr = atob(attachment.content);
                     const bytes = new Uint8Array(binaryStr.length);
                     for (let i = 0; i < binaryStr.length; i++) {
-                        bytes[i] = binaryStr.charCodeAt(i);
+                        bytes[i] = binaryStr.charCodeAt(i)!;
                     }
 
-                    const r2Result = await uploadToR2(r2, fileKey, bytes.buffer, attachment.content_type);
+                    const s3Result = await uploadToS3(fileKey, bytes.buffer, attachment.content_type);
                     const fileUrl = getFileViewUrl(noticeId);
 
                     // AI extraction
@@ -91,7 +76,7 @@ export async function POST(req: NextRequest) {
                     const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
                     const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
-                    // Calculate risk (reuse the same logic from notice router)
+                    // Calculate risk (same logic as notice router)
                     const deadline = extraction.data.deadline;
                     const amountRupees = amountPaise ? amountPaise / 100 : 0;
                     let riskLevel = "low";
@@ -103,28 +88,26 @@ export async function POST(req: NextRequest) {
                         else if (daysUntil < 14 && riskLevel !== "high") riskLevel = "medium";
                     }
 
-                    if (drizzle) {
-                        await drizzle.insert(noticesTable).values({
-                            id: noticeId,
-                            tenantId,
-                            fileName: attachment.name,
-                            fileUrl,
-                            fileSize: attachment.size,
-                            fileHash: r2Result.fileHash,
-                            authority: extraction.data.authority,
-                            noticeType: extraction.data.noticeType,
-                            amount: amountPaise,
-                            deadline: extraction.data.deadline,
-                            section: extraction.data.section,
-                            financialYear: extraction.data.financialYear,
-                            confidence: extraction.confidence,
-                            riskLevel,
-                            status,
-                            source: "email",
-                            createdAt: new Date(),
-                            updatedAt: new Date(),
-                        });
-                    }
+                    await db.insert(noticesTable).values({
+                        id: noticeId,
+                        tenantId,
+                        fileName: attachment.name,
+                        fileUrl,
+                        fileSize: attachment.size,
+                        fileHash: s3Result.fileHash,
+                        authority: extraction.data.authority,
+                        noticeType: extraction.data.noticeType,
+                        amount: amountPaise,
+                        deadline: extraction.data.deadline,
+                        section: extraction.data.section,
+                        financialYear: extraction.data.financialYear,
+                        confidence: extraction.confidence,
+                        riskLevel,
+                        status,
+                        source: "email",
+                        createdAt: new Date(),
+                        updatedAt: new Date(),
+                    });
 
                     processedNotices.push(noticeId);
                     console.log(`[Email] Processed attachment: ${attachment.name} → notice ${noticeId}`);
