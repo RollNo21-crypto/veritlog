@@ -1,5 +1,5 @@
 const CRON_SECRET = "cron-local-secret-2026-p3nwz";
-const URL = `http://localhost:3000/api/cron/poll-email?secret=${CRON_SECRET}`;
+const URL = `http://localhost:3001/api/cron/poll-email?secret=${CRON_SECRET}`;
 
 async function triggerCron() {
     console.log(`🚀 Triggering IMAP Cron at ${URL}...`);
