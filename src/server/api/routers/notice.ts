@@ -4,8 +4,8 @@ import { extractNoticeData } from "~/server/services/extraction";
 import { uploadToS3, dataUrlToBuffer, getFileViewUrl } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
 import { generateShareToken } from "~/server/services/shareToken";
-import { notices, auditLogs, attachments } from "~/server/db/schema";
-import { eq, and, isNull, desc, asc, sql } from "drizzle-orm";
+import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
+import { eq, and, isNull, desc, asc, sql, getTableColumns } from "drizzle-orm";
 
 /**
  * Calculate risk level based on deadline proximity and amount.
@@ -92,6 +92,9 @@ export const noticeRouter = createTRPCRouter({
                 deadline: extraction.data.deadline,
                 section: extraction.data.section,
                 financialYear: extraction.data.financialYear,
+                summary: extraction.data.summary,
+                nextSteps: extraction.data.nextSteps,
+                requiredDocuments: extraction.data.requiredDocuments,
                 confidence: extraction.confidence,
                 riskLevel,
                 status,
@@ -182,8 +185,12 @@ export const noticeRouter = createTRPCRouter({
             }
 
             return await ctx.db
-                .select()
+                .select({
+                    ...getTableColumns(notices),
+                    clientBusinessName: clients.businessName,
+                })
                 .from(notices)
+                .leftJoin(clients, eq(notices.clientId, clients.id))
                 .where(and(...conditions))
                 .orderBy(...orderByClause);
         }),
@@ -617,5 +624,79 @@ export const noticeRouter = createTRPCRouter({
             });
 
             return { success: true };
+        }),
+
+    /**
+     * Get all response attachments for a notice
+     */
+    getAttachments: protectedProcedure
+        .input(z.object({ noticeId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) return [];
+
+            return ctx.db
+                .select()
+                .from(attachments)
+                .where(
+                    and(
+                        eq(attachments.noticeId, input.noticeId),
+                        eq(attachments.tenantId, tenantId)
+                    )
+                )
+                .orderBy(desc(attachments.createdAt));
+        }),
+
+    /**
+     * Link an uploaded response document to a notice (Immutable Ledger)
+     */
+    addAttachment: protectedProcedure
+        .input(
+            z.object({
+                noticeId: z.string(),
+                fileName: z.string(),
+                fileUrl: z.string(),
+                fileSize: z.number().optional(),
+                fileHash: z.string().optional(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            const attachmentId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+            await ctx.db.transaction(async (tx) => {
+                await tx.insert(attachments).values({
+                    id: attachmentId,
+                    noticeId: input.noticeId,
+                    tenantId,
+                    userId,
+                    fileName: input.fileName,
+                    fileUrl: input.fileUrl,
+                    fileSize: input.fileSize ?? null,
+                    fileHash: input.fileHash ?? null,
+                    createdAt: new Date(),
+                });
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "attachment.added",
+                    entityType: "notice",
+                    entityId: input.noticeId,
+                    newValue: JSON.stringify({
+                        attachmentId,
+                        fileName: input.fileName,
+                        fileUrl: input.fileUrl
+                    }),
+                    createdAt: new Date(),
+                });
+            });
+
+            return { success: true, attachmentId };
         }),
 });

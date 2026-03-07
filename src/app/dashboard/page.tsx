@@ -19,7 +19,7 @@ import { Skeleton } from "~/components/ui/skeleton";
 
 export default function DashboardPage() {
     const { data: stats, isLoading: statsLoading } = api.notice.stats.useQuery();
-    const { data: recentNotices, isLoading: noticesLoading } = api.notice.list.useQuery();
+    const { data: recentNotices, isLoading: noticesLoading, refetch } = api.notice.list.useQuery();
 
     return (
         <div className="space-y-6">
@@ -185,17 +185,11 @@ export default function DashboardPage() {
                                                 {notice.riskLevel}
                                             </Badge>
                                         )}
-                                        <Badge
-                                            variant={
-                                                notice.status === "verified"
-                                                    ? "default"
-                                                    : notice.status === "review_needed"
-                                                        ? "secondary"
-                                                        : "outline"
-                                            }
-                                        >
-                                            {notice.status.replace("_", " ")}
-                                        </Badge>
+                                        <div onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                            <Badge variant="outline" className="uppercase text-[10px] tracking-wider font-bold">
+                                                {notice.status ? notice.status.replace(/_/g, ' ') : "UNKNOWN"}
+                                            </Badge>
+                                        </div>
                                     </div>
                                 </Link>
                             ))}

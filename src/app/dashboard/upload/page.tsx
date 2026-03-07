@@ -3,10 +3,18 @@
 import { useCallback, useState } from "react";
 import { useDropzone } from "react-dropzone";
 import { api } from "~/trpc/react";
-import { Upload, FileText, X, Loader2, CheckCircle, AlertTriangle } from "lucide-react";
+import { Upload, FileText, X, Loader2, CheckCircle, AlertTriangle, Building2 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
+import { Label } from "~/components/ui/label";
+import {
+    Select,
+    SelectContent,
+    SelectItem,
+    SelectTrigger,
+    SelectValue,
+} from "~/components/ui/select";
 
 interface UploadedFile {
     file: File;
@@ -19,7 +27,9 @@ interface UploadedFile {
 
 export default function UploadPage() {
     const [files, setFiles] = useState<UploadedFile[]>([]);
+    const [selectedClientId, setSelectedClientId] = useState<string>("none");
     const uploadMutation = api.notice.upload.useMutation();
+    const { data: clientList } = api.clients.list.useQuery();
 
     const onDrop = useCallback((acceptedFiles: File[]) => {
         const newFiles: UploadedFile[] = acceptedFiles.map((file) => ({
@@ -48,13 +58,11 @@ export default function UploadPage() {
             const uploadFile = files[i];
             if (!uploadFile || uploadFile.status !== "pending") continue;
 
-            // Mark as uploading
             setFiles((prev) =>
                 prev.map((f, idx) => (idx === i ? { ...f, status: "uploading" as const } : f))
             );
 
             try {
-                // Convert file to base64 for now (will be replaced with R2 direct upload)
                 const base64 = await fileToBase64(uploadFile.file);
 
                 const result = await uploadMutation.mutateAsync({
@@ -62,6 +70,7 @@ export default function UploadPage() {
                     fileSize: uploadFile.file.size,
                     fileType: uploadFile.file.type,
                     fileData: base64,
+                    clientId: selectedClientId !== "none" ? selectedClientId : undefined,
                 });
 
                 setFiles((prev) =>
@@ -95,6 +104,7 @@ export default function UploadPage() {
 
     const pendingCount = files.filter((f) => f.status === "pending").length;
     const uploadingCount = files.filter((f) => f.status === "uploading").length;
+    const selectedClient = clientList?.find((c) => c.id === selectedClientId);
 
     return (
         <div className="space-y-6">
@@ -106,14 +116,66 @@ export default function UploadPage() {
                 </p>
             </div>
 
+            {/* Client Picker */}
+            <Card>
+                <CardHeader className="pb-3">
+                    <CardTitle className="flex items-center gap-2 text-base">
+                        <Building2 className="h-4 w-4" />
+                        Assign to Client
+                    </CardTitle>
+                    <CardDescription>
+                        Which client does this notice belong to?
+                    </CardDescription>
+                </CardHeader>
+                <CardContent>
+                    {clientList && clientList.length > 0 ? (
+                        <Select value={selectedClientId} onValueChange={setSelectedClientId}>
+                            <SelectTrigger className="w-full max-w-sm">
+                                <SelectValue placeholder="Select a client..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                                <SelectItem value="none">
+                                    <span className="text-muted-foreground uppercase font-bold tracking-wider text-[10px]">No client (untagged)</span>
+                                </SelectItem>
+                                {clientList.map((client: { id: string; businessName: string; gstin: string | null }) => (
+                                    <SelectItem key={client.id} value={client.id}>
+                                        <div className="flex flex-col">
+                                            <span className="font-bold uppercase tracking-tight text-foreground">{client.businessName}</span>
+                                            {client.gstin && (
+                                                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">GSTIN: {client.gstin}</span>
+                                            )}
+                                        </div>
+                                    </SelectItem>
+                                ))}
+                            </SelectContent>
+                        </Select>
+                    ) : (
+                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <AlertTriangle className="h-4 w-4 text-amber-500" />
+                            No clients yet.{" "}
+                            <a href="/dashboard/clients" className="text-primary underline underline-offset-2">
+                                Add a client
+                            </a>{" "}
+                            to tag notices for bifurcation.
+                        </div>
+                    )}
+                    {selectedClient && (
+                        <p className="mt-2 text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                            Notices will be tagged to <strong className="text-foreground">{selectedClient.businessName}</strong>
+                            {selectedClient.gstin && ` (GSTIN: ${selectedClient.gstin})`}
+                        </p>
+                    )}
+                </CardContent>
+            </Card>
+
             {/* Drop Zone */}
             <Card>
                 <CardContent className="pt-6">
                     <div
                         {...getRootProps()}
                         className={`flex min-h-[200px] cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors ${isDragActive
-                                ? "border-primary bg-primary/5"
-                                : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
+                            ? "border-primary bg-primary/5"
+                            : "border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/50"
                             }`}
                     >
                         <input {...getInputProps()} />
@@ -139,10 +201,15 @@ export default function UploadPage() {
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
                         <div>
-                            <CardTitle className="text-lg">Uploaded Files</CardTitle>
+                            <CardTitle className="text-lg">Files</CardTitle>
                             <CardDescription>
                                 {pendingCount > 0 && `${pendingCount} pending · `}
                                 {files.filter((f) => f.status === "success").length} processed
+                                {selectedClient && (
+                                    <span className="ml-2">
+                                        · Tagged to <strong>{selectedClient.businessName}</strong>
+                                    </span>
+                                )}
                             </CardDescription>
                         </div>
                         {pendingCount > 0 && (
@@ -213,29 +280,6 @@ export default function UploadPage() {
                     </CardContent>
                 </Card>
             )}
-
-            {/* Email Forwarding Info */}
-            <Card>
-                <CardHeader>
-                    <CardTitle className="text-lg">Email Forwarding</CardTitle>
-                    <CardDescription>
-                        Automatically ingest notices by forwarding them to your unique address
-                    </CardDescription>
-                </CardHeader>
-                <CardContent>
-                    <div className="rounded-lg bg-muted p-4">
-                        <p className="text-sm font-medium text-foreground">
-                            Forward notices to:
-                        </p>
-                        <code className="mt-1 block text-sm text-primary">
-                            notices-your-org@ingest.veritlog.in
-                        </code>
-                        <p className="mt-2 text-xs text-muted-foreground">
-                            Attachments are automatically extracted and processed with the same AI pipeline.
-                        </p>
-                    </div>
-                </CardContent>
-            </Card>
         </div>
     );
 }

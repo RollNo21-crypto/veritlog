@@ -47,6 +47,8 @@ export const notices = pgTable("notices", {
     section: text("section"),
     financialYear: text("financial_year"),
     summary: text("summary"), // LLM-generated plain-language summary
+    nextSteps: text("next_steps"), // AI-suggested next steps for CA
+    requiredDocuments: text("required_documents"), // AI-suggested documents to collect
 
     // AI confidence & risk
     confidence: text("confidence"), // "high" | "medium" | "low"

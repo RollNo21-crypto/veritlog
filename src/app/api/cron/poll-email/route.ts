@@ -17,9 +17,11 @@ export async function GET(req: NextRequest) {
     const tenantId = process.env.EMAIL_TENANT_ID ?? "system";
 
     try {
-        console.log("[cron/poll-email] Starting IMAP poll...");
+        console.log("──────────────────────────────────────────────────");
+        console.log("🔄 [cron/poll-email] Starting IMAP inbox poll for new notices...");
         const result = await pollEmailInbox(tenantId);
-        console.log(`[cron/poll-email] Done — processed: ${result.processed}, failed: ${result.failed}, skipped: ${result.skipped}`);
+        console.log(`✨ [cron/poll-email] Poll Complete — Processed: ${result.processed} | Skipped: ${result.skipped} | Failed: ${result.failed}`);
+        console.log("──────────────────────────────────────────────────");
 
         return NextResponse.json({
             ok: true,
@@ -30,7 +32,7 @@ export async function GET(req: NextRequest) {
     } catch (err) {
         const msg = err instanceof Error ? err.message : "Unknown error";
         const stack = err instanceof Error ? err.stack : "";
-        console.error("[cron/poll-email] Error:", msg);
+        console.error("🚨 [cron/poll-email] CRITICAL ERROR:", msg);
         return NextResponse.json({ ok: false, error: msg, stack, tenantId }, { status: 500 });
     }
 }

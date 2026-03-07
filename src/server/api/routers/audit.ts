@@ -42,9 +42,37 @@ export const auditRouter = createTRPCRouter({
                     action: auditLogs.action,
                     entityType: auditLogs.entityType,
                     entityId: auditLogs.entityId,
+                    newValue: auditLogs.newValue,
                     createdAt: auditLogs.createdAt,
                 })
                 .from(auditLogs)
+                .where(eq(auditLogs.tenantId, tenantId))
+                .orderBy(desc(auditLogs.createdAt))
+                .limit(input.limit);
+        }),
+
+    /**
+     * Recent notifications for the bell dropdown — joins with notices for context
+     */
+    notifications: protectedProcedure
+        .input(z.object({ limit: z.number().min(1).max(50).default(20) }))
+        .query(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) return [];
+
+            return ctx.db
+                .select({
+                    id: auditLogs.id,
+                    action: auditLogs.action,
+                    entityId: auditLogs.entityId,
+                    newValue: auditLogs.newValue,
+                    createdAt: auditLogs.createdAt,
+                    noticeFileName: notices.fileName,
+                    noticeAuthority: notices.authority,
+                    riskLevel: notices.riskLevel,
+                })
+                .from(auditLogs)
+                .leftJoin(notices, eq(auditLogs.entityId, notices.id))
                 .where(eq(auditLogs.tenantId, tenantId))
                 .orderBy(desc(auditLogs.createdAt))
                 .limit(input.limit);

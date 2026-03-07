@@ -24,6 +24,8 @@ import {
     GripVertical,
     X,
     Loader2,
+    Building2,
+    Filter,
 } from "lucide-react";
 import { Badge } from "~/components/ui/badge";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -59,6 +61,8 @@ type NoticeItem = {
     status: string;
     confidence: string | null;
     assignedTo: string | null;
+    clientId: string | null;
+    clientBusinessName: string | null;
 };
 
 const COLUMNS: {
@@ -173,6 +177,15 @@ function SortableCard({
                         </Badge>
                     )}
                 </div>
+
+                {/* Client badge */}
+                {notice.clientBusinessName && (
+                    <div className="mt-1">
+                        <Badge variant="outline" className="text-xs border-blue-500/40 text-blue-600 dark:text-blue-400 bg-blue-500/5">
+                            <Building2 className="mr-1 h-2.5 w-2.5" />{notice.clientBusinessName}
+                        </Badge>
+                    </div>
+                )}
 
                 {/* Assignee */}
                 <div className="mt-2">
@@ -404,18 +417,39 @@ export default function WorkspacePage() {
 
     const [activeId, setActiveId] = useState<string | null>(null);
     const [closingNotice, setClosingNotice] = useState<NoticeItem | null>(null);
+    const [clientFilter, setClientFilter] = useState<string>("all");
+
+    // Collect unique clients from notices
+    const clientOptions = Array.from(
+        new Map(
+            (allNotices ?? [])
+                .filter((n) => n.clientId && n.clientBusinessName)
+                .map((n) => [n.clientId, n.clientBusinessName])
+        ).entries()
+    );
+
+    const filteredNotices = (allNotices ?? []).filter(
+        (n) => clientFilter === "all" || n.clientId === clientFilter
+    );
 
     const sensors = useSensors(
         useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
     );
 
     const getColumn = useCallback(
-        (status: NoticeStatus) =>
-            (allNotices ?? []).filter((n) => n.status === status) as NoticeItem[],
-        [allNotices]
+        (status: NoticeStatus) => {
+            // "processing" notices appear in Review Needed with an AI badge
+            if (status === "review_needed") {
+                return filteredNotices.filter(
+                    (n) => n.status === "review_needed" || n.status === "processing"
+                ) as NoticeItem[];
+            }
+            return filteredNotices.filter((n) => n.status === status) as NoticeItem[];
+        },
+        [filteredNotices]
     );
 
-    const activeNotice = allNotices?.find((n) => n.id === activeId) as NoticeItem | undefined;
+    const activeNotice = filteredNotices?.find((n) => n.id === activeId) as NoticeItem | undefined;
 
     const handleDragStart = (event: DragStartEvent) => {
         setActiveId(event.active.id as string);
@@ -427,13 +461,12 @@ export default function WorkspacePage() {
 
         if (!over) return;
 
-        // `over.id` can be a column id or a card id — find the column
         const destColumnId = COLUMNS.find((c) => c.id === over.id)?.id
-            ?? (allNotices?.find((n) => n.id === over.id)?.status as NoticeStatus | undefined);
+            ?? (filteredNotices?.find((n) => n.id === over.id)?.status as NoticeStatus | undefined);
 
         if (!destColumnId) return;
 
-        const notice = allNotices?.find((n) => n.id === active.id);
+        const notice = filteredNotices?.find((n) => n.id === active.id);
         if (!notice || notice.status === destColumnId) return;
 
         // Intercept "closed" moves to show dialog
@@ -445,7 +478,7 @@ export default function WorkspacePage() {
         updateStatusMutation.mutate({ id: notice.id, status: destColumnId });
     };
 
-    const notices = allNotices ?? [];
+    const notices = filteredNotices ?? [];
 
     return (
         <div className="space-y-6">
@@ -455,12 +488,30 @@ export default function WorkspacePage() {
                     <h1 className="text-3xl font-bold uppercase tracking-tight text-foreground">Workspace</h1>
                     <p className="mt-1 text-sm text-muted-foreground">Drag notices between stages to update their status</p>
                 </div>
-                <Link href="/dashboard/upload">
-                    <Button variant="outline" size="sm">
-                        <Plus className="mr-2 h-4 w-4" />
-                        Upload Notice
-                    </Button>
-                </Link>
+                <div className="flex items-center gap-2">
+                    {/* Client filter */}
+                    {clientOptions.length > 0 && (
+                        <div className="flex items-center gap-1.5">
+                            <Filter className="h-4 w-4 text-muted-foreground" />
+                            <select
+                                value={clientFilter}
+                                onChange={(e) => setClientFilter(e.target.value)}
+                                className="rounded-md border border-border bg-background px-2 py-1.5 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
+                            >
+                                <option value="all">All Clients</option>
+                                {clientOptions.map(([id, name]) => (
+                                    <option key={id ?? ""} value={id ?? ""}>{name}</option>
+                                ))}
+                            </select>
+                        </div>
+                    )}
+                    <Link href="/dashboard/upload">
+                        <Button variant="outline" size="sm">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Upload Notice
+                        </Button>
+                    </Link>
+                </div>
             </div>
 
             {/* Board */}

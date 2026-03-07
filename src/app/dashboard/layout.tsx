@@ -9,8 +9,6 @@ import {
     BarChart3,
     Settings,
     Search,
-    Bell,
-    Plus,
     Menu,
     X,
     Activity,
@@ -18,6 +16,7 @@ import {
     Building2,
     Users,
 } from "lucide-react";
+import { NotificationBell } from "~/components/NotificationBell";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { useState } from "react";
 import { DarkModeToggle } from "~/components/dark-mode-toggle";
@@ -25,7 +24,6 @@ import { api } from "~/trpc/react";
 import { userButtonAppearance } from "~/lib/clerk-appearance";
 
 const otherLinks = [
-    { name: "Email", href: "/dashboard/email", icon: Mail },
     { name: "Reports", href: "/dashboard/reports", icon: BarChart3 },
     { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
@@ -48,7 +46,6 @@ export default function DashboardLayout({
         { name: "Review Queue", href: "/dashboard/review", icon: FileText, badge: stats?.reviewNeeded ? stats.reviewNeeded.toString() : undefined },
         { name: "Kanban Board", href: "/dashboard/kanban", icon: LayoutDashboard },
         { name: "Clients", href: "/dashboard/clients", icon: Building2 },
-        { name: "Team", href: "/dashboard/team", icon: Users },
         { name: "Audit Trail", href: "/dashboard/audit", icon: Shield },
         { name: "Ops Dashboard", href: "/dashboard/admin/ops", icon: Activity },
         { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
@@ -91,9 +88,6 @@ export default function DashboardLayout({
                 {/* Navigation */}
                 <div className="flex h-[calc(100vh-4rem)] flex-col overflow-y-auto p-4">
                     <div className="mb-6 flex-1">
-                        <div className="mb-3 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                            Main Menu
-                        </div>
                         <nav className="space-y-1">
                             {navigation.map((item) => {
                                 const Icon = item.icon;
@@ -123,9 +117,6 @@ export default function DashboardLayout({
                         </nav>
 
                         <div className="mt-6">
-                            <div className="mb-3 px-3 text-xs font-bold uppercase tracking-wider text-muted-foreground">
-                                Other
-                            </div>
                             <nav className="space-y-1">
                                 {otherLinks.map((item) => {
                                     const Icon = item.icon;
@@ -148,24 +139,6 @@ export default function DashboardLayout({
                             </nav>
                         </div>
                     </div>
-
-                    {/* User Profile */}
-                    <div className="border-t border-border pt-4">
-                        <div className="flex items-center gap-3 border border-border bg-background p-3 hover:border-foreground">
-                            <UserButton
-                                afterSignOutUrl="/"
-                                appearance={userButtonAppearance}
-                            />
-                            <div className="flex-1 min-w-0">
-                                <div className="text-sm font-medium text-card-foreground truncate">
-                                    {user?.fullName || user?.firstName || "User"}
-                                </div>
-                                <div className="text-xs text-muted-foreground truncate">
-                                    {user?.primaryEmailAddress?.emailAddress || "user@example.com"}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
             </aside>
 
@@ -173,13 +146,16 @@ export default function DashboardLayout({
             <div className="flex flex-1 flex-col overflow-hidden">
                 {/* Top Bar */}
                 <header className="flex h-16 items-center justify-between border-b border-border bg-card px-4 lg:px-6">
-                    <div className="flex flex-1 items-center gap-4">
+                    <div className="flex items-center gap-4">
                         <button
                             onClick={() => setSidebarOpen(true)}
                             className="lg:hidden"
                         >
                             <Menu className="h-6 w-6 text-foreground" />
                         </button>
+                    </div>
+
+                    <div className="flex flex-1 items-center gap-4 hidden lg:flex">
                         <div className="relative w-full max-w-md">
                             <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                             <input
@@ -189,16 +165,19 @@ export default function DashboardLayout({
                             />
                         </div>
                     </div>
-                    <div className="flex items-center gap-3">
+
+                    <div className="flex flex-1 items-center gap-4 lg:justify-end lg:flex-none ml-auto">
                         <DarkModeToggle />
-                        <button className="relative border border-border bg-background p-2 hover:border-foreground">
-                            <Bell className="h-5 w-5 text-muted-foreground" />
-                            <span className="absolute right-1 top-1 h-2 w-2 bg-foreground"></span>
-                        </button>
-                        <button className="hidden items-center gap-2 border-2 border-accent bg-accent px-4 py-2 text-sm font-bold text-accent-foreground hover:bg-transparent hover:text-accent sm:flex">
-                            <Plus className="h-4 w-4" />
-                            <span>ADD WIDGET</span>
-                        </button>
+                        <NotificationBell />
+                        <div className="border-l border-border h-8 mx-2" />
+                        <div className="flex flex-col items-end hidden sm:flex mr-2">
+                            <span className="text-sm font-medium leading-tight">{user?.fullName || user?.firstName || "User"}</span>
+                            <span className="text-[10px] text-muted-foreground leading-tight uppercase tracking-wider">Workspace</span>
+                        </div>
+                        <UserButton
+                            afterSignOutUrl="/"
+                            appearance={userButtonAppearance}
+                        />
                     </div>
                 </header>
 

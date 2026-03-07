@@ -75,6 +75,16 @@ function formatDate(d: Date | string | null | undefined) {
     });
 }
 
+function formatPayload(payload?: string | null) {
+    if (!payload) return null;
+    try {
+        const parsed = JSON.parse(payload);
+        return JSON.stringify(parsed, null, 2);
+    } catch {
+        return payload;
+    }
+}
+
 export default function AuditTrailPage() {
     const [search, setSearch] = useState("");
     const { data: events, isLoading } = api.audit.listRecent.useQuery({ limit: 100 });
@@ -109,10 +119,16 @@ export default function AuditTrailPage() {
                     { label: "Assigned", value: events?.filter(e => e.action === "notice.assigned").length ?? 0 },
                     { label: "Closed", value: events?.filter(e => e.action === "notice.closed").length ?? 0 },
                 ].map((s) => (
-                    <Card key={s.label} className="p-4">
-                        <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">{s.label}</p>
-                        {isLoading ? <Skeleton className="mt-1 h-7 w-12" /> : <p className="mt-1 text-2xl font-bold text-foreground">{s.value}</p>}
-                    </Card>
+                    <div key={s.label} className="border-2 border-dashed border-border bg-transparent p-4 flex flex-col gap-1.5">
+                        <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-2">
+                            {s.label === "Verified" && <CheckCircle className="h-3 w-3" />}
+                            {s.label === "Total Events" && <Shield className="h-3 w-3" />}
+                            {s.label === "Assigned" && <UserCheck className="h-3 w-3" />}
+                            {s.label === "Closed" && <Lock className="h-3 w-3" />}
+                            {s.label}
+                        </p>
+                        {isLoading ? <Skeleton className="h-7 w-12" /> : <p className="text-2xl font-black text-foreground">{s.value}</p>}
+                    </div>
                 ))}
             </div>
 
@@ -128,18 +144,20 @@ export default function AuditTrailPage() {
             </div>
 
             {/* Event list */}
-            <Card>
-                <CardHeader className="pb-2">
-                    <CardTitle className="text-base">Event Log</CardTitle>
-                    <CardDescription>Sorted newest first · Read-only · NFR13 compliant</CardDescription>
-                </CardHeader>
-                <CardContent>
+            <div className="border-2 border-border bg-card">
+                <div className="border-b-2 border-border bg-muted/30 p-4">
+                    <h2 className="text-sm font-bold uppercase tracking-widest text-foreground flex items-center gap-2">
+                        <Shield className="h-4 w-4" /> SYSTEM EVENT LOG
+                    </h2>
+                    <p className="text-xs text-muted-foreground mt-1 font-mono uppercase tracking-wide">Sorted newest first · Read-only · NFR13 compliant</p>
+                </div>
+                <div className="flex flex-col">
                     {isLoading ? (
-                        <div className="space-y-3">
+                        <div className="space-y-4 p-6">
                             {[...Array(5)].map((_, i) => (
-                                <div key={i} className="flex gap-3">
-                                    <Skeleton className="h-9 w-9 shrink-0 rounded-full" />
-                                    <div className="flex-1 space-y-1.5">
+                                <div key={i} className="flex gap-4">
+                                    <Skeleton className="h-10 w-10 shrink-0 rounded-none border-2 border-border" />
+                                    <div className="flex-1 space-y-2">
                                         <Skeleton className="h-4 w-1/3" />
                                         <Skeleton className="h-3 w-1/2" />
                                     </div>
@@ -147,49 +165,67 @@ export default function AuditTrailPage() {
                             ))}
                         </div>
                     ) : !filtered || filtered.length === 0 ? (
-                        <div className="py-12 text-center">
-                            <Shield className="mx-auto mb-3 h-10 w-10 text-muted-foreground/30" />
-                            <p className="text-sm text-muted-foreground">No audit events found</p>
+                        <div className="py-16 text-center">
+                            <Shield className="mx-auto mb-4 h-12 w-12 text-muted-foreground/30" />
+                            <p className="text-sm font-medium uppercase tracking-widest text-muted-foreground">No audit events found</p>
                         </div>
                     ) : (
-                        <div className="relative divide-y divide-border">
+                        <div className="flex flex-col divide-y-2 divide-border">
                             {filtered.map((event) => {
                                 const meta = ACTION_META[event.action] ?? {
                                     label: event.action.replace(/[._]/g, " "),
                                     icon: <Shield className="h-4 w-4" />,
                                     color: "bg-muted text-muted-foreground",
                                 };
+                                const payloadStr = formatPayload(event.newValue);
 
                                 return (
-                                    <div key={event.id} className="flex items-start gap-3 py-3">
-                                        <div className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-full ${meta.color}`}>
+                                    <div key={event.id} className="group flex flex-col items-start gap-4 p-5 sm:flex-row hover:bg-muted/10 transition-colors">
+                                        <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-none border-2 border-border ${meta.color}`}>
                                             {meta.icon}
                                         </div>
-                                        <div className="flex flex-1 items-start justify-between gap-2">
-                                            <div>
-                                                <p className="text-sm font-semibold text-foreground">{meta.label}</p>
-                                                <p className="text-xs text-muted-foreground">
-                                                    <span className="font-medium text-foreground/70">{event.userId.slice(0, 14)}…</span>
-                                                    {" · "}
-                                                    Notice: <code className="rounded bg-muted px-1 py-0.5 text-[10px]">{event.entityId.slice(0, 20)}…</code>
-                                                </p>
+                                        <div className="flex flex-1 flex-col gap-2">
+                                            <div className="flex flex-wrap items-center justify-between gap-4">
+                                                <div className="flex items-center gap-2">
+                                                    <Badge variant="outline" className={`text-[10px] font-bold uppercase tracking-wider ${meta.color.replace('bg-', 'border-').replace('/10', '/30')}`}>
+                                                        {meta.label}
+                                                    </Badge>
+                                                    <span className="text-xs font-mono text-muted-foreground bg-muted px-2 py-0.5 border border-border">
+                                                        {formatDate(event.createdAt)}
+                                                    </span>
+                                                </div>
+                                                <div className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">
+                                                    ID: {event.id}
+                                                </div>
                                             </div>
-                                            <div className="flex shrink-0 flex-col items-end gap-1">
-                                                <Badge variant="outline" className="text-[10px]">
-                                                    {meta.label}
-                                                </Badge>
-                                                <span className="text-[10px] text-muted-foreground whitespace-nowrap">
-                                                    {formatDate(event.createdAt)}
-                                                </span>
-                                            </div>
+
+                                            <p className="text-sm font-medium mt-1">
+                                                Event <code className="bg-primary/10 text-primary px-1.5 py-0.5 rounded text-xs">{event.action}</code> triggered by <code className="bg-muted px-1.5 py-0.5 rounded text-xs text-muted-foreground border border-border">{event.userId}</code>
+                                            </p>
+                                            
+                                            <p className="text-xs text-muted-foreground">
+                                                Target: <span className="font-mono text-foreground font-semibold uppercase">{event.entityType}</span> <code className="font-mono text-muted-foreground">{event.entityId}</code>
+                                            </p>
+
+                                            {payloadStr && (
+                                                <div className="mt-3 bg-[#0a0a0a] border-2 border-dashed border-border p-3 w-full overflow-x-auto shadow-inner">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <div className="h-2 w-2 rounded-full bg-green-500"></div>
+                                                        <span className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold">Immutable Payload</span>
+                                                    </div>
+                                                    <pre className="text-[11px] font-mono text-green-400 leading-relaxed">
+                                                        {payloadStr}
+                                                    </pre>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 );
                             })}
                         </div>
                     )}
-                </CardContent>
-            </Card>
+                </div>
+            </div>
         </div>
     );
 }

@@ -28,7 +28,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
     const pass = process.env.EMAIL_IMAP_PASS;
 
     if (!host || !user || !pass) {
-        console.warn("[IMAP] Missing EMAIL_IMAP_* env vars — skipping poll");
+        console.warn("⚠️ [IMAP] Missing EMAIL_IMAP_* env vars — skipping poll. Check your .env file.");
         return { processed: 0, failed: 0, skipped: 0 };
     }
 
@@ -53,24 +53,24 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
             const uids: number[] = Array.isArray(searchResult) ? searchResult : [];
 
             if (uids.length === 0) {
-                console.log("[IMAP] No unread messages");
+                console.log("📭 [IMAP] Inbox is clear. No unread messages found.");
                 return result;
             }
 
-            console.log(`[IMAP] Found ${uids.length} unread message(s)`);
+            console.log(`📬 [IMAP] Found ${uids.length} unread message(s). Starting processing cycle...`);
 
             for (const uid of uids) {
                 try {
                     // Fetch full raw RFC822 source — reliably handles all MIME structures
                     const msg = await client.fetchOne(String(uid), { source: true, envelope: true }, { uid: true });
                     if (!msg?.source) {
-                        console.log(`[IMAP] UID ${uid} — no source, skipping`);
+                        console.log(`⏭️ [IMAP] UID: ${uid} | No source found in email, skipping...`);
                         result.skipped++;
                         continue;
                     }
 
                     const subject = msg.envelope?.subject ?? "(no subject)";
-                    console.log(`[IMAP] Processing: ${subject}`);
+                    console.log(`\n📧 [IMAP] Processing Email: "${subject}"`);
 
                     // Parse with mailparser — handles nested/forwarded emails correctly
                     const parsed = await simpleParser(msg.source);
@@ -79,7 +79,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                     );
 
                     if (pdfAttachments.length === 0) {
-                        console.log(`[IMAP] No PDFs in: ${subject} — skipping`);
+                        console.log(`⏭️ [IMAP] No PDFs in: "${subject}" | Marking seen and skipping...`);
                         try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                         result.skipped++;
                         continue;
@@ -93,10 +93,10 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                             const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                             const s3Key = `${tenantId}/${noticeId}/${filename}`;
 
-                            console.log(`[IMAP] Uploading PDF ${filename} to S3...`);
+                            console.log(`☁️  [IMAP/S3] Uploading PDF document '${filename}' to S3 storage...`);
                             const s3Result = await uploadToS3(s3Key, buffer.buffer as ArrayBuffer, "application/pdf");
 
-                            console.log(`[IMAP] Running AI extraction on ${filename}...`);
+                            console.log(`🤖  [IMAP/AI] Running AI extraction (Gemini/Bedrock) on '${filename}'...`);
                             const dataUrl = `data:application/pdf;base64,${buffer.toString("base64")}`;
                             const extraction = await extractNoticeData(dataUrl, "parallel");
 
@@ -112,7 +112,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                             const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
                             const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
-                            console.log(`[IMAP] Inserting notice into DB (confidence: ${extraction.confidence})...`);
+                            console.log(`💾  [IMAP/DB] Inserting notice into database. (Confidence Level: ${extraction.confidence.toUpperCase()})`);
                             await db.insert(notices).values({
                                 id: noticeId,
                                 tenantId,
@@ -146,11 +146,11 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                                 createdAt: new Date(),
                             });
 
-                            console.log(`[IMAP] ✅ Created notice ${noticeId} (${extraction.confidence} confidence)`);
+                            console.log(`✅  [IMAP] Successfully created notice: ${noticeId}`);
                             result.processed++;
                         } catch (pdfErr) {
                             const errMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-                            console.error(`[IMAP] ❌ Failed processing PDF ${filename}:`, errMsg);
+                            console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, errMsg);
                             result.failed++;
                             result.lastError = errMsg;
                         }
@@ -160,7 +160,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                     try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                 } catch (msgErr) {
                     const errMsg = msgErr instanceof Error ? msgErr.message : String(msgErr);
-                    console.error("[IMAP] ❌ Message error:", errMsg);
+                    console.error("🚨  [IMAP] CRITICAL: Message processing error:", errMsg);
                     result.failed++;
                     result.lastError = errMsg;
                 }

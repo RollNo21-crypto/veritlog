@@ -21,6 +21,8 @@ export interface NoticeExtraction {
     section: string | null;
     financialYear: string | null;
     summary: string | null;
+    nextSteps: string | null;
+    requiredDocuments: string | null;
 }
 
 export interface ExtractionResult {
@@ -43,7 +45,9 @@ Extract the following fields from the document and return ONLY valid JSON with n
   "deadline": "Response deadline in YYYY-MM-DD format or null",
   "section": "Relevant section/act e.g. Section 74 of CGST Act 2017 or null",
   "financialYear": "Financial year e.g. 2023-24 or null",
-  "summary": "One plain-English sentence summarising what this notice is about"
+  "summary": "One plain-English sentence summarising what this notice is about",
+  "nextSteps": "Bullet points detailing the recommended next steps the CA/tax professional should take to resolve or reply to this notice",
+  "requiredDocuments": "Bullet points listing exactly what documents or evidence the CA will need to collect from the client to draft the reply"
 }
 If a field cannot be determined, use null. Return only the JSON object, nothing else.`;
 
@@ -246,6 +250,8 @@ function extractMockData(startTime: number): ExtractionResult {
             section: "Section 74 of CGST Act, 2017",
             financialYear: "2023-24",
             summary: "GST Department issued a show cause notice demanding ₹2,50,000 for alleged ITC mismatch in FY 2023-24.",
+            nextSteps: "• Review the notice thoroughly\n• Check the ITC ledger\n• Prepare a draft reply",
+            requiredDocuments: "• GSTR-2A/2B reconciliations\n• Purchase invoices for disputed amount\n• Bank statements showing payment to suppliers",
         },
         confidence: "medium",
         provider: "mock",

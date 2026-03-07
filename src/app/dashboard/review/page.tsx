@@ -19,6 +19,7 @@ import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { Skeleton } from "~/components/ui/skeleton";
+import { StatusSelect } from "~/components/StatusSelect";
 
 type NoticeStatus = "processing" | "review_needed" | "verified" | "in_progress" | "closed";
 
@@ -52,7 +53,7 @@ export default function ReviewQueuePage() {
     const [sortBy, setSortBy] = useState<"createdAt" | "riskLevel">("riskLevel");
     const [authorityFilter, setAuthorityFilter] = useState<string>("all");
 
-    const { data: notices, isLoading } = api.notice.list.useQuery(
+    const { data: notices, isLoading, refetch } = api.notice.list.useQuery(
         {
             status: statusFilter === "all" ? undefined : statusFilter,
             sortBy: sortBy,
@@ -230,9 +231,13 @@ export default function ReviewQueuePage() {
                                                 {notice.riskLevel} risk
                                             </Badge>
                                         )}
-                                        <Badge variant="outline" className="text-xs">
-                                            {notice.status.replace("_", " ")}
-                                        </Badge>
+                                        <div onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                            <StatusSelect
+                                                noticeId={notice.id}
+                                                currentStatus={notice.status}
+                                                onStatusChange={() => void refetch()}
+                                            />
+                                        </div>
                                     </div>
                                 </CardContent>
                             </Card>

@@ -21,6 +21,8 @@ import {
     Send,
     Trash2,
     FileDown,
+    UploadCloud,
+    Lock,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -47,6 +49,7 @@ import {
     ResizablePanelGroup,
 } from "~/components/ui/resizable";
 import { AssigneeSelect } from "~/components/AssigneeSelect";
+import { StatusSelect } from "~/components/StatusSelect";
 
 // Use the CDN worker — required for react-pdf v9
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -137,6 +140,56 @@ export default function VerifyNoticePage() {
     const { data: notice, isLoading, refetch } = api.notice.getById.useQuery({ id: noticeId });
     const { data: noticeComments, refetch: refetchComments } = api.comment.list.useQuery({ noticeId });
     const { data: auditTrail } = api.audit.listForNotice.useQuery({ noticeId });
+    const { data: attachments, refetch: refetchAttachments } = api.notice.getAttachments.useQuery({ noticeId });
+
+    const [isUploading, setIsUploading] = useState(false);
+
+    const addAttachmentMutation = api.notice.addAttachment.useMutation({
+        onSuccess: () => {
+            toast.success("Response Document securely logged to immutable ledger");
+            void refetchAttachments();
+            void refetch();
+        },
+        onError: () => toast.error("Failed to log document"),
+    });
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        setIsUploading(true);
+        const toastId = toast.loading("Uploading securely...");
+        try {
+            const formData = new FormData();
+            formData.append("file", file);
+            formData.append("noticeId", noticeId);
+
+            const res = await fetch("/api/upload", {
+                method: "POST",
+                body: formData,
+            });
+
+            if (!res.ok) throw new Error("Upload failed");
+
+            const data = await res.json() as { fileName: string; fileUrl: string; fileSize?: number; fileHash?: string };
+
+            await addAttachmentMutation.mutateAsync({
+                noticeId,
+                fileName: data.fileName,
+                fileUrl: data.fileUrl,
+                fileSize: data.fileSize,
+                fileHash: data.fileHash,
+            });
+            toast.dismiss(toastId);
+
+        } catch (error) {
+            console.error(error);
+            toast.error("Failed to upload response document", { id: toastId });
+        } finally {
+            setIsUploading(false);
+            if (e.target) e.target.value = "";
+        }
+    };
 
     const assignMutation = api.notice.assign.useMutation({
         onSuccess: () => { toast.success("Notice assigned"); void refetch(); },
@@ -369,12 +422,19 @@ export default function VerifyNoticePage() {
                     {/* ── Right: Tabbed Editor ── */}
                     <ResizablePanel defaultSize={50} minSize={30} className="flex flex-col bg-card">
                         <Tabs defaultValue="fields" className="flex flex-1 flex-col overflow-hidden">
-                            <TabsList className="mx-4 mt-4 grid w-auto max-w-[400px] grid-cols-3 self-start">
+                            <TabsList className="mx-4 mt-4 grid w-auto max-w-[500px] grid-cols-4 self-start">
                                 <TabsTrigger value="fields">Fields</TabsTrigger>
                                 <TabsTrigger value="comments">
                                     Comments
                                     {(noticeComments?.length ?? 0) > 0 && (
                                         <Badge variant="secondary" className="ml-1 text-xs">{noticeComments!.length}</Badge>
+                                    )}
+                                </TabsTrigger>
+                                <TabsTrigger value="ledger" className="flex items-center gap-1.5">
+                                    <Lock className="h-3 w-3" />
+                                    Ledger
+                                    {(attachments?.length ?? 0) > 0 && (
+                                        <Badge variant="secondary" className="ml-1 text-xs">{attachments!.length}</Badge>
                                     )}
                                 </TabsTrigger>
                                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
@@ -400,25 +460,74 @@ export default function VerifyNoticePage() {
                                     <FieldRow label="Financial Year" value={formData.financialYear} onChange={(v) => setFormData({ ...formData, financialYear: v })} placeholder="e.g., 2023-24" confidence={notice.confidence as Confidence} />
                                 </div>
 
-                                {notice.summary && (
+                                {(notice.summary || notice.nextSteps || notice.requiredDocuments) && (
                                     <>
                                         <Separator className="my-4" />
-                                        <Card className="bg-muted/50">
-                                            <CardHeader className="pb-2">
-                                                <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Extracted Summary</CardTitle>
-                                            </CardHeader>
-                                            <CardContent>
-                                                <p className="text-sm text-foreground leading-relaxed">{notice.summary}</p>
-                                            </CardContent>
-                                        </Card>
+                                        <div className="space-y-4">
+                                            {notice.summary && (
+                                                <div className="bg-transparent border-2 border-dashed border-border p-4">
+                                                    <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                                                        <span>✨</span> AI EXTRACTED SUMMARY
+                                                    </h4>
+                                                    <p className="text-sm text-foreground leading-relaxed font-medium">{notice.summary}</p>
+                                                </div>
+                                            )}
+
+                                            {notice.nextSteps && (
+                                                <div className="bg-transparent border-2 border-dashed border-border p-4">
+                                                    <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                                                        <CheckCircle className="h-3 w-3" /> RECOMMENDED NEXT STEPS
+                                                    </h4>
+                                                    <ul className="space-y-1.5 text-sm font-medium text-foreground">
+                                                        {notice.nextSteps.split('\n').filter(Boolean).map((step: string, i: number) => (
+                                                            <li key={i} className="flex items-start gap-2">
+                                                                <span className="text-muted-foreground mt-0.5">—</span>
+                                                                <span className="leading-relaxed">{step.replace(/^[•\-\*]\s*/, '')}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+
+                                            {notice.requiredDocuments && (
+                                                <div className="bg-transparent border-2 border-dashed border-border p-4">
+                                                    <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
+                                                        <FileDown className="h-3 w-3" /> DOCUMENTS TO COLLECT
+                                                    </h4>
+                                                    <ul className="space-y-1.5 text-sm font-medium text-foreground">
+                                                        {notice.requiredDocuments.split('\n').filter(Boolean).map((doc: string, i: number) => (
+                                                            <li key={i} className="flex items-start gap-2">
+                                                                <span className="text-muted-foreground mt-0.5">—</span>
+                                                                <span className="leading-relaxed">{doc.replace(/^[•\-\*]\s*/, '')}</span>
+                                                            </li>
+                                                        ))}
+                                                    </ul>
+                                                </div>
+                                            )}
+                                        </div>
                                     </>
                                 )}
 
                                 <Separator className="my-4" />
                                 <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/30 p-4 text-xs">
-                                    <div><p className="font-medium text-muted-foreground mb-1">Status</p><p className="capitalize font-medium">{notice.status.replace("_", " ")}</p></div>
-                                    <div><p className="font-medium text-muted-foreground mb-1">Source</p><p className="capitalize font-medium">{notice.source}</p></div>
-                                    {notice.verifiedBy && <div><p className="font-medium text-muted-foreground mb-1">Verified By</p><p className="font-medium">{notice.verifiedBy}</p></div>}
+                                    <div className="flex flex-col gap-1.5">
+                                        <p className="font-medium text-muted-foreground uppercase tracking-wide text-[10px]">Status</p>
+                                        <StatusSelect
+                                            noticeId={noticeId}
+                                            currentStatus={notice.status}
+                                            onStatusChange={() => void refetch()}
+                                        />
+                                    </div>
+                                    <div className="flex flex-col gap-1.5">
+                                        <p className="font-medium text-muted-foreground uppercase tracking-wide text-[10px]">Source</p>
+                                        <p className="uppercase font-bold tracking-wider mt-1">{notice.source}</p>
+                                    </div>
+                                    {notice.verifiedBy &&
+                                        <div className="col-span-2 pt-2 border-t border-border/50">
+                                            <p className="font-medium text-muted-foreground uppercase tracking-wide text-[10px] mb-1">Verified By</p>
+                                            <p className="font-semibold">{notice.verifiedBy}</p>
+                                        </div>
+                                    }
                                 </div>
                                 {/* Assignment */}
                                 <div className="mt-4 space-y-1.5">
@@ -549,7 +658,7 @@ export default function VerifyNoticePage() {
                                                     <p className="text-xs text-muted-foreground mt-0.5">
                                                         <span className="font-medium text-foreground/80">{entry.userId.slice(0, 12)}…</span> · {formatDate(entry.createdAt)}
                                                     </p>
-                                                    {entry.newValue && (() => {
+                                                    {entry.newValue && entry.action !== "attachment.added" && (() => {
                                                         try {
                                                             const parsed = JSON.parse(entry.newValue) as Record<string, unknown>;
                                                             return (
@@ -566,6 +675,86 @@ export default function VerifyNoticePage() {
                                         })}
                                     </div>
                                 )}
+                            </TabsContent>
+
+                            {/* ── Response Ledger Tab ── */}
+                            <TabsContent value="ledger" className="flex-1 overflow-y-auto p-0 flex flex-col">
+                                <div className="p-6 border-b border-border bg-muted/10">
+                                    <div className="flex flex-col gap-2 mb-4">
+                                        <h3 className="text-sm font-bold uppercase tracking-widest text-foreground flex items-center gap-2">
+                                            <Lock className="h-4 w-4 text-amber-500" />
+                                            Immutable Response Ledger
+                                        </h3>
+                                        <p className="text-xs text-muted-foreground leading-relaxed">
+                                            Documents uploaded here are securely logged to the audit trail as proof of compliance.
+                                            Once logged, they cannot be modified or deleted, satisfying NFR13 & FR25 requirements.
+                                        </p>
+                                    </div>
+
+                                    <div className="relative border-2 border-dashed border-border rounded-lg p-6 flex flex-col items-center justify-center bg-card hover:bg-muted/30 transition-colors">
+                                        <input
+                                            type="file"
+                                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer disabled:cursor-not-allowed"
+                                            onChange={(e) => void handleFileUpload(e)}
+                                            disabled={isUploading}
+                                            accept="application/pdf,image/*"
+                                        />
+                                        <div className="flex flex-col items-center gap-2 text-center pointer-events-none">
+                                            {isUploading ? (
+                                                <Loader2 className="h-8 w-8 text-muted-foreground animate-spin" />
+                                            ) : (
+                                                <UploadCloud className="h-8 w-8 text-muted-foreground" />
+                                            )}
+                                            <p className="text-sm font-medium">
+                                                {isUploading ? "Uploading Securely..." : "Drag & Drop Response Document"}
+                                            </p>
+                                            <p className="text-xs text-muted-foreground">PDF or Images up to 10MB</p>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="flex-1 p-6">
+                                    {!attachments ? (
+                                        <div className="space-y-3">
+                                            {[...Array(2)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                                        </div>
+                                    ) : attachments.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-12 text-center">
+                                            <FileDown className="mb-3 h-8 w-8 text-muted-foreground/50" />
+                                            <p className="text-sm font-medium text-foreground">No recorded responses</p>
+                                            <p className="text-xs text-muted-foreground mt-1">Upload the finalized response and acknowledgment receipt here.</p>
+                                        </div>
+                                    ) : (
+                                        <div className="space-y-3">
+                                            {attachments.map((doc) => (
+                                                <div key={doc.id} className="group flex items-center justify-between rounded-lg border border-border bg-card p-4 hover:shadow-sm transition-shadow">
+                                                    <div className="flex items-start gap-4 flex-1 overflow-hidden">
+                                                        <div className="mt-1 h-8 w-8 shrink-0 rounded bg-amber-500/10 flex items-center justify-center text-amber-500">
+                                                            <Lock className="h-4 w-4" />
+                                                        </div>
+                                                        <div className="flex flex-col overflow-hidden">
+                                                            <p className="truncate text-sm font-medium text-foreground" title={doc.fileName}>
+                                                                {doc.fileName}
+                                                            </p>
+                                                            <div className="mt-1 flex items-center gap-3 text-xs text-muted-foreground">
+                                                                <span>{formatDate(doc.createdAt)}</span>
+                                                                <span className="h-1 w-1 rounded-full bg-border" />
+                                                                <span className="uppercase tracking-wider">Logged by {doc.userId.slice(0, 10)}</span>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div className="ml-4 flex items-center shrink-0">
+                                                        <Button variant="outline" size="sm" className="h-8 px-3" asChild>
+                                                            <a href={doc.fileUrl} target="_blank" rel="noopener noreferrer">
+                                                                View Record
+                                                            </a>
+                                                        </Button>
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
                             </TabsContent>
                         </Tabs>
                     </ResizablePanel>
