@@ -106,7 +106,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                                 name: "CA Firm",
                                 plan: "free",
                                 createdAt: new Date(),
-                            }).onConflictDoNothing();
+                            }).onConflictDoNothing({ target: tenants.id });
 
                             const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
                             const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
