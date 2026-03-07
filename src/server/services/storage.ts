@@ -85,7 +85,8 @@ export async function getPresignedUrl(fileKey: string, expiresInSeconds = 3600):
  * The API route validates Clerk session before retrieving from S3.
  */
 export function getFileViewUrl(fileKey: string): string {
-    return `/api/files/${fileKey}`;
+    const encodedKey = fileKey.split('/').map(p => encodeURIComponent(p)).join('/');
+    return `/api/files/${encodedKey}`;
 }
 
 /**

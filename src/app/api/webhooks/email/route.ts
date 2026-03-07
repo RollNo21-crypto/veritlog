@@ -49,7 +49,7 @@ export async function POST(req: NextRequest) {
             const { uploadToS3, getFileViewUrl } = await import("~/server/services/storage");
             const { extractNoticeData } = await import("~/server/services/extraction");
             const { db } = await import("~/server/db");
-            const { notices: noticesTable, clients, tenants } = await import("~/server/db/schema");
+            const { notices: noticesTable, auditLogs, clients, tenants } = await import("~/server/db/schema");
             const { eq, and, or, ilike } = await import("drizzle-orm");
 
             for (const attachment of attachments) {
@@ -134,6 +134,20 @@ export async function POST(req: NextRequest) {
                     });
 
                     processedNotices.push(noticeId);
+
+                    // 🔔 Create audit log for notification bell
+                    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                    await db.insert(auditLogs).values({
+                        id: auditId,
+                        tenantId,
+                        userId: "system",
+                        action: "notice.created_via_email",
+                        entityType: "notice",
+                        entityId: noticeId,
+                        newValue: JSON.stringify({ source: "webhook", type: "pdf", fileName: attachment.name }),
+                        createdAt: new Date(),
+                    });
+
                     console.log(`[Email] Processed attachment: ${attachment.name} → notice ${noticeId}`);
                 } catch (err) {
                     console.error(`[Email] Failed to process attachment ${attachment.name}:`, err);
@@ -143,7 +157,7 @@ export async function POST(req: NextRequest) {
             // 📧 Handle Email Intimations (No Attachments)
             const { extractNoticeData } = await import("~/server/services/extraction");
             const { db } = await import("~/server/db");
-            const { notices: noticesTable, clients, tenants } = await import("~/server/db/schema");
+            const { notices: noticesTable, auditLogs, clients, tenants } = await import("~/server/db/schema");
             const { eq, and, or, ilike } = await import("drizzle-orm");
 
             const bodyText = (body.text ?? body.html ?? "").toString().trim().replace(/<[^>]*>?/gm, "");
@@ -211,6 +225,19 @@ export async function POST(req: NextRequest) {
                         });
 
                         processedNotices.push(noticeId);
+
+                        // 🔔 Create audit log for notification bell
+                        const auditIdIntimation = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                        await db.insert(auditLogs).values({
+                            id: auditIdIntimation,
+                            tenantId,
+                            userId: "system",
+                            action: "notice.created_via_email",
+                            entityType: "notice",
+                            entityId: noticeId,
+                            newValue: JSON.stringify({ source: "webhook", type: "intimation", fileName: "Email Intimation" }),
+                            createdAt: new Date(),
+                        });
                     }
                 } catch (extErr) {
                     console.error("[Email/Webhook] Extraction failed:", extErr);

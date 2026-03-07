@@ -171,6 +171,19 @@ export async function pollEmailInbox(
 
                                 console.log(`💾 [IMAP/DB] Successfully inserted intimation notice: ${noticeId}`);
 
+                                // 🔔 Create audit log entry for notification bell
+                                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                                await db.insert(auditLogs).values({
+                                    id: auditId,
+                                    tenantId,
+                                    userId: "system",
+                                    action: "notice.created_via_email",
+                                    entityType: "notice",
+                                    entityId: noticeId,
+                                    newValue: JSON.stringify({ source: "imap", type: "intimation", fileName: "Email Intimation" }),
+                                    createdAt: new Date(),
+                                });
+
                                 result.processed++;
                                 console.log(`✅  [IMAP] Intimation created: ${noticeId}`);
                             } else {
@@ -262,6 +275,19 @@ export async function pollEmailInbox(
                                     source: "email",
                                     createdAt: new Date(),
                                     updatedAt: new Date(),
+                                });
+
+                                // 🔔 Create audit log entry for notification bell
+                                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                                await db.insert(auditLogs).values({
+                                    id: auditId,
+                                    tenantId,
+                                    userId: "system",
+                                    action: "notice.created_via_email",
+                                    entityType: "notice",
+                                    entityId: noticeId,
+                                    newValue: JSON.stringify({ source: "imap", type: "pdf", fileName: filename }),
+                                    createdAt: new Date(),
                                 });
 
                                 result.processed++;
