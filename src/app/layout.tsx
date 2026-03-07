@@ -3,6 +3,7 @@ import "~/styles/globals.css";
 import { type Metadata } from "next";
 import { Geist } from "next/font/google";
 import { ClerkProvider } from "@clerk/nextjs";
+import { clerkAppearance } from "~/lib/clerk-appearance";
 
 import { TRPCReactProvider } from "~/trpc/react";
 
@@ -21,7 +22,7 @@ export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <ClerkProvider>
+    <ClerkProvider appearance={clerkAppearance}>
       <html lang="en" className={`${geist.variable}`} suppressHydrationWarning>
         <head>
           <script
@@ -38,7 +39,7 @@ export default function RootLayout({
             }}
           />
         </head>
-        <body className="bg-background font-sans antialiased">
+        <body className="bg-background text-foreground font-sans antialiased">
           <TRPCReactProvider>{children}</TRPCReactProvider>
         </body>
       </html>

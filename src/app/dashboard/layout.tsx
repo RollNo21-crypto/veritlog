@@ -5,7 +5,6 @@ import { usePathname } from "next/navigation";
 import {
     LayoutDashboard,
     FileText,
-    Users,
     Mail,
     BarChart3,
     Settings,
@@ -13,19 +12,17 @@ import {
     Bell,
     Plus,
     Menu,
-    X
+    X,
+    Activity,
+    Shield,
+    Building2,
+    Users,
 } from "lucide-react";
 import { UserButton, useUser } from "@clerk/nextjs";
 import { useState } from "react";
 import { DarkModeToggle } from "~/components/dark-mode-toggle";
-
-const navigation = [
-    { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
-    { name: "Upload", href: "/dashboard/upload", icon: FileText },
-    { name: "Review Queue", href: "/dashboard/review", icon: FileText, badge: "22" },
-    { name: "Workspace", href: "/dashboard/workspace", icon: Users },
-    { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
-];
+import { api } from "~/trpc/react";
+import { userButtonAppearance } from "~/lib/clerk-appearance";
 
 const otherLinks = [
     { name: "Email", href: "/dashboard/email", icon: Mail },
@@ -41,6 +38,21 @@ export default function DashboardLayout({
     const pathname = usePathname();
     const [sidebarOpen, setSidebarOpen] = useState(false);
     const { user } = useUser();
+
+    // Fetch dynamic stats for badges
+    const { data: stats } = api.notice.stats.useQuery(undefined, { refetchInterval: 30000 });
+
+    const navigation = [
+        { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+        { name: "Upload", href: "/dashboard/upload", icon: FileText },
+        { name: "Review Queue", href: "/dashboard/review", icon: FileText, badge: stats?.reviewNeeded ? stats.reviewNeeded.toString() : undefined },
+        { name: "Kanban Board", href: "/dashboard/kanban", icon: LayoutDashboard },
+        { name: "Clients", href: "/dashboard/clients", icon: Building2 },
+        { name: "Team", href: "/dashboard/team", icon: Users },
+        { name: "Audit Trail", href: "/dashboard/audit", icon: Shield },
+        { name: "Ops Dashboard", href: "/dashboard/admin/ops", icon: Activity },
+        { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3 },
+    ];
 
     return (
         <div className="flex h-screen overflow-hidden bg-background">
@@ -124,7 +136,7 @@ export default function DashboardLayout({
                                             href={item.href}
                                             onClick={() => setSidebarOpen(false)}
                                             className={`flex items-center gap-3 border px-3 py-3 text-sm font-medium transition-colors ${isActive
-                                                ? "border-accent bg-accent text-white"
+                                                ? "border-accent bg-accent text-accent-foreground"
                                                 : "border-border bg-background text-muted-foreground hover:border-accent hover:text-accent"
                                                 }`}
                                         >
@@ -142,11 +154,7 @@ export default function DashboardLayout({
                         <div className="flex items-center gap-3 border border-border bg-background p-3 hover:border-foreground">
                             <UserButton
                                 afterSignOutUrl="/"
-                                appearance={{
-                                    elements: {
-                                        avatarBox: "h-9 w-9 rounded-none"
-                                    }
-                                }}
+                                appearance={userButtonAppearance}
                             />
                             <div className="flex-1 min-w-0">
                                 <div className="text-sm font-medium text-card-foreground truncate">

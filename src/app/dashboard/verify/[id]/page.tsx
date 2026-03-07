@@ -20,6 +20,7 @@ import {
     Clock,
     Send,
     Trash2,
+    FileDown,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -40,6 +41,12 @@ import {
     SelectTrigger,
     SelectValue,
 } from "~/components/ui/select";
+import {
+    ResizableHandle,
+    ResizablePanel,
+    ResizablePanelGroup,
+} from "~/components/ui/resizable";
+import { AssigneeSelect } from "~/components/AssigneeSelect";
 
 // Use the CDN worker — required for react-pdf v9
 pdfjs.GlobalWorkerOptions.workerSrc = `//unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
@@ -56,6 +63,25 @@ function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
             {confidence}
         </Badge>
     );
+}
+
+function calculateRiskLevel(deadline: string | null, amount: string | null): "high" | "medium" | "low" {
+    const amountRupees = amount ? parseFloat(amount) : 0;
+
+    // Check amount thresholds
+    if (amountRupees > 1000000) return "high"; // > ₹10 Lakhs
+
+    if (deadline) {
+        const deadlineDate = new Date(deadline);
+        const now = new Date();
+        const daysUntil = Math.ceil((deadlineDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+
+        if (daysUntil < 7) return "high";
+        if (daysUntil < 14) return "medium";
+    }
+
+    if (amountRupees > 100000) return "medium";
+    return "low";
 }
 
 function FieldRow({
@@ -84,7 +110,7 @@ function FieldRow({
                     {required && <span className="ml-1 text-destructive">*</span>}
                 </Label>
                 <ConfidenceBadge confidence={confidence} />
-                {needsReview && <AlertTriangle className="ml-1 h-3 w-3 text-yellow-500" />}
+                {needsReview && <AlertTriangle className="ml-1 h-4 w-4 text-amber-500 animate-pulse" />}
             </div>
             <Input
                 type={type}
@@ -93,7 +119,7 @@ function FieldRow({
                 placeholder={placeholder}
                 className={
                     needsReview
-                        ? "border-yellow-400 bg-yellow-50 dark:bg-yellow-950/20 focus-visible:ring-yellow-500"
+                        ? "border-amber-500 bg-amber-50/50 dark:bg-amber-950/30 focus-visible:ring-amber-500 ring-1 ring-amber-500/20"
                         : confidence === "high"
                             ? "border-green-400 focus-visible:ring-green-500"
                             : ""
@@ -138,6 +164,14 @@ export default function VerifyNoticePage() {
     const deleteCommentMutation = api.comment.delete.useMutation({
         onSuccess: () => void refetchComments(),
         onError: () => toast.error("Failed to delete comment"),
+    });
+
+    const flagTemplateMutation = api.notice.flagTemplateIssue.useMutation({
+        onSuccess: () => {
+            toast.success("Template issue flagged. Dev team notified.");
+            void refetch();
+        },
+        onError: () => toast.error("Failed to flag template issue"),
     });
 
     const [formData, setFormData] = useState({
@@ -219,6 +253,8 @@ export default function VerifyNoticePage() {
         );
     }
 
+    const currentRiskLevel = calculateRiskLevel(formData.deadline, formData.amount);
+
     const isPdf = notice.fileName?.toLowerCase().endsWith(".pdf");
     const isImage =
         notice.fileName?.toLowerCase().endsWith(".jpg") ||
@@ -239,13 +275,29 @@ export default function VerifyNoticePage() {
                         <h1 className="text-lg font-bold text-foreground">Verify Notice</h1>
                         <p className="text-xs text-muted-foreground">{notice.fileName}</p>
                     </div>
-                    {notice.riskLevel && notice.riskLevel !== "low" && (
-                        <Badge variant={notice.riskLevel === "high" ? "destructive" : "secondary"}>
-                            {notice.riskLevel} risk
+                    {currentRiskLevel && currentRiskLevel !== "low" && (
+                        <Badge variant={currentRiskLevel === "high" ? "destructive" : "secondary"}>
+                            {currentRiskLevel} risk
                         </Badge>
                     )}
                 </div>
                 <div className="flex items-center gap-2">
+                    <AssigneeSelect
+                        noticeId={noticeId}
+                        currentAssignee={notice.assignedTo ?? null}
+                        onAssigned={() => void refetch()}
+                    />
+                    {/* Download Audit Report — Story 6.1 */}
+                    {["verified", "closed", "approved"].includes(notice.status) && (
+                        <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => window.open(`/api/notice/${noticeId}/audit-report`, "_blank")}
+                        >
+                            <FileDown className="mr-2 h-4 w-4" />
+                            Audit Report
+                        </Button>
+                    )}
                     <Button variant="outline" size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
                         {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                         Save
@@ -264,226 +316,260 @@ export default function VerifyNoticePage() {
 
             {/* Split View */}
             <div className="flex flex-1 overflow-hidden">
-                {/* ── Left: PDF / Image Viewer ── */}
-                <div className="flex w-1/2 flex-col border-r border-border bg-muted/30">
-                    {isPdf && !pdfError && (
-                        <div className="flex items-center justify-between border-b border-border px-4 py-2">
-                            <div className="flex items-center gap-2">
-                                <Button variant="ghost" size="icon" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
-                                    <ChevronLeft className="h-4 w-4" />
-                                </Button>
-                                <span className="text-xs text-muted-foreground">{currentPage} / {numPages ?? "—"}</span>
-                                <Button variant="ghost" size="icon" onClick={() => setCurrentPage((p) => Math.min(numPages ?? 1, p + 1))} disabled={currentPage >= (numPages ?? 1)}>
-                                    <ChevronRight className="h-4 w-4" />
-                                </Button>
-                            </div>
-                            <div className="flex items-center gap-2">
-                                <Button variant="ghost" size="icon" onClick={() => setScale((s) => Math.max(0.5, s - 0.2))}><ZoomOut className="h-4 w-4" /></Button>
-                                <span className="min-w-12 text-center text-xs text-muted-foreground">{Math.round(scale * 100)}%</span>
-                                <Button variant="ghost" size="icon" onClick={() => setScale((s) => Math.min(3, s + 0.2))}><ZoomIn className="h-4 w-4" /></Button>
-                                <Button variant="ghost" size="icon" onClick={() => { setScale(1.0); setCurrentPage(1); }}><RotateCcw className="h-4 w-4" /></Button>
-                            </div>
-                        </div>
-                    )}
-                    <div className="flex-1 overflow-auto p-4">
-                        {isPdf && notice.fileUrl && !pdfError ? (
-                            <Document
-                                file={notice.fileUrl}
-                                onLoadSuccess={({ numPages }) => setNumPages(numPages)}
-                                onLoadError={() => setPdfError(true)}
-                                loading={<div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>}
-                            >
-                                <Page pageNumber={currentPage} scale={scale} className="mx-auto shadow-lg" />
-                            </Document>
-                        ) : isImage && notice.fileUrl ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img src={notice.fileUrl} alt={notice.fileName ?? "Notice"} className="mx-auto max-w-full rounded-lg shadow-md" />
-                        ) : (
-                            <div className="flex h-full items-center justify-center text-center">
-                                <div>
-                                    <p className="text-sm font-medium text-muted-foreground">{pdfError ? "Failed to load PDF" : "No preview available"}</p>
-                                    {notice.fileUrl && (
-                                        <a href={notice.fileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 text-xs text-primary underline">Open file directly</a>
-                                    )}
+                <ResizablePanelGroup direction="horizontal" className="h-full w-full rounded-none">
+                    {/* ── Left: PDF / Image Viewer ── */}
+                    <ResizablePanel defaultSize={50} minSize={30} className="flex flex-col border-r border-border bg-muted/30">
+                        {isPdf && !pdfError && (
+                            <div className="flex items-center justify-between border-b border-border px-4 py-2">
+                                <div className="flex items-center gap-2">
+                                    <Button variant="ghost" size="icon" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage <= 1}>
+                                        <ChevronLeft className="h-4 w-4" />
+                                    </Button>
+                                    <span className="text-xs text-muted-foreground">{currentPage} / {numPages ?? "—"}</span>
+                                    <Button variant="ghost" size="icon" onClick={() => setCurrentPage((p) => Math.min(numPages ?? 1, p + 1))} disabled={currentPage >= (numPages ?? 1)}>
+                                        <ChevronRight className="h-4 w-4" />
+                                    </Button>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <Button variant="ghost" size="icon" onClick={() => setScale((s) => Math.max(0.5, s - 0.2))}><ZoomOut className="h-4 w-4" /></Button>
+                                    <span className="min-w-12 text-center text-xs text-muted-foreground">{Math.round(scale * 100)}%</span>
+                                    <Button variant="ghost" size="icon" onClick={() => setScale((s) => Math.min(3, s + 0.2))}><ZoomIn className="h-4 w-4" /></Button>
+                                    <Button variant="ghost" size="icon" onClick={() => { setScale(1.0); setCurrentPage(1); }}><RotateCcw className="h-4 w-4" /></Button>
                                 </div>
                             </div>
                         )}
-                    </div>
-                </div>
-
-                {/* ── Right: Tabbed Editor ── */}
-                <div className="flex w-1/2 flex-col overflow-hidden bg-card">
-                    <Tabs defaultValue="fields" className="flex flex-1 flex-col overflow-hidden">
-                        <TabsList className="mx-4 mt-4 grid w-auto grid-cols-3 self-start">
-                            <TabsTrigger value="fields">Fields</TabsTrigger>
-                            <TabsTrigger value="comments">
-                                Comments
-                                {(noticeComments?.length ?? 0) > 0 && (
-                                    <Badge variant="secondary" className="ml-1 text-xs">{noticeComments!.length}</Badge>
-                                )}
-                            </TabsTrigger>
-                            <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                        </TabsList>
-
-                        {/* ── Fields Tab ── */}
-                        <TabsContent value="fields" className="flex-1 overflow-y-auto p-6 pt-4">
-                            {notice.confidence === "low" && (
-                                <div className="mb-4 flex items-center gap-2 rounded-lg border border-yellow-400 bg-yellow-50 px-4 py-3 text-sm text-yellow-800 dark:bg-yellow-950/20 dark:text-yellow-200">
-                                    <AlertTriangle className="h-4 w-4 shrink-0" />
-                                    <span><strong>Low confidence</strong> — please review all highlighted fields.</span>
+                        <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
+                            {isPdf && notice.fileUrl && !pdfError ? (
+                                <Document
+                                    file={notice.fileUrl}
+                                    onLoadSuccess={({ numPages }) => setNumPages(numPages)}
+                                    onLoadError={() => setPdfError(true)}
+                                    loading={<div className="flex h-64 items-center justify-center"><Loader2 className="h-8 w-8 animate-spin text-muted-foreground" /></div>}
+                                >
+                                    <Page pageNumber={currentPage} scale={scale} className="shadow-lg border border-border/50" renderAnnotationLayer={false} renderTextLayer={false} />
+                                </Document>
+                            ) : isImage && notice.fileUrl ? (
+                                // eslint-disable-next-line @next/next/no-img-element
+                                <img src={notice.fileUrl} alt={notice.fileName ?? "Notice"} className="max-w-full rounded-lg shadow-md border border-border/50" />
+                            ) : (
+                                <div className="flex h-full items-center justify-center text-center">
+                                    <div>
+                                        <p className="text-sm font-medium text-muted-foreground">{pdfError ? "Failed to load PDF" : "No preview available"}</p>
+                                        {notice.fileUrl && (
+                                            <a href={notice.fileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex text-xs text-primary underline">Open file directly</a>
+                                        )}
+                                    </div>
                                 </div>
                             )}
-                            <div className="space-y-4">
-                                <FieldRow label="Issuing Authority" value={formData.authority} onChange={(v) => setFormData({ ...formData, authority: v })} placeholder="e.g., GST Department, Maharashtra" confidence={notice.confidence as Confidence} required />
-                                <FieldRow label="Notice Type" value={formData.noticeType} onChange={(v) => setFormData({ ...formData, noticeType: v })} placeholder="e.g., Show Cause Notice" confidence={notice.confidence as Confidence} required />
-                                <FieldRow label="Amount Demanded (₹)" value={formData.amount} onChange={(v) => setFormData({ ...formData, amount: v })} type="number" placeholder="250000" confidence={notice.confidence as Confidence} />
-                                <FieldRow label="Response Deadline" value={formData.deadline} onChange={(v) => setFormData({ ...formData, deadline: v })} type="date" confidence={notice.confidence as Confidence} required />
-                                <FieldRow label="Section / Act" value={formData.section} onChange={(v) => setFormData({ ...formData, section: v })} placeholder="e.g., Section 74 of CGST Act" confidence={notice.confidence as Confidence} />
-                                <FieldRow label="Financial Year" value={formData.financialYear} onChange={(v) => setFormData({ ...formData, financialYear: v })} placeholder="e.g., 2023-24" confidence={notice.confidence as Confidence} />
-                            </div>
+                        </div>
+                    </ResizablePanel>
 
-                            {notice.summary && (
-                                <>
-                                    <Separator className="my-4" />
-                                    <Card>
-                                        <CardHeader className="pb-2">
-                                            <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Summary</CardTitle>
-                                        </CardHeader>
-                                        <CardContent>
-                                            <p className="text-sm text-foreground leading-relaxed">{notice.summary}</p>
-                                        </CardContent>
-                                    </Card>
-                                </>
-                            )}
+                    <ResizableHandle withHandle />
 
-                            <Separator className="my-4" />
-                            <div className="grid grid-cols-2 gap-3 text-xs text-muted-foreground">
-                                <div><p className="font-medium">Status</p><p className="capitalize">{notice.status.replace("_", " ")}</p></div>
-                                <div><p className="font-medium">Source</p><p className="capitalize">{notice.source}</p></div>
-                                {notice.verifiedBy && <div><p className="font-medium">Verified By</p><p>{notice.verifiedBy}</p></div>}
-                            </div>
-                            {/* Assignment */}
-                            <div className="mt-3 space-y-1.5">
-                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Assign To</Label>
-                                <Select
-                                    value={notice.assignedTo ?? "unassigned"}
-                                    onValueChange={(v) => {
-                                        const assignTo = v === "unassigned" ? "" : v;
-                                        assignMutation.mutate({ id: noticeId, assignedTo: assignTo });
-                                    }}
-                                >
-                                    <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Unassigned" />
-                                    </SelectTrigger>
-                                    <SelectContent>
-                                        <SelectItem value="unassigned">— Unassigned —</SelectItem>
-                                        <SelectItem value="me">Me (current user)</SelectItem>
-                                        <SelectItem value="team">Team</SelectItem>
-                                    </SelectContent>
-                                </Select>
-                            </div>
-                            <Separator className="my-4" />
-                            <Button variant="outline" className="w-full text-destructive border-destructive/50 hover:bg-destructive/10" onClick={() => toast.info("Issue reported — feature coming soon")}>
-                                <Flag className="mr-2 h-4 w-4" /> Report Extraction Issue
-                            </Button>
-                        </TabsContent>
+                    {/* ── Right: Tabbed Editor ── */}
+                    <ResizablePanel defaultSize={50} minSize={30} className="flex flex-col bg-card">
+                        <Tabs defaultValue="fields" className="flex flex-1 flex-col overflow-hidden">
+                            <TabsList className="mx-4 mt-4 grid w-auto max-w-[400px] grid-cols-3 self-start">
+                                <TabsTrigger value="fields">Fields</TabsTrigger>
+                                <TabsTrigger value="comments">
+                                    Comments
+                                    {(noticeComments?.length ?? 0) > 0 && (
+                                        <Badge variant="secondary" className="ml-1 text-xs">{noticeComments!.length}</Badge>
+                                    )}
+                                </TabsTrigger>
+                                <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                            </TabsList>
 
-                        {/* ── Comments Tab ── */}
-                        <TabsContent value="comments" className="flex h-full flex-col overflow-hidden p-0">
-                            {/* Comment thread */}
-                            <div className="flex-1 overflow-y-auto p-4 space-y-3">
-                                {!noticeComments ? (
-                                    <div className="space-y-2">
-                                        {[...Array(2)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                            {/* ── Fields Tab ── */}
+                            <TabsContent value="fields" className="flex-1 overflow-y-auto p-6 pt-4">
+                                {notice.confidence === "low" && (
+                                    <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:bg-amber-950/30 dark:text-amber-200">
+                                        <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
+                                        <div className="flex flex-col">
+                                            <span className="font-semibold">Review Alert: Low Extraction Confidence</span>
+                                            <span className="text-xs opacity-90">Please manually verify all highlighted fields against the source document.</span>
+                                        </div>
                                     </div>
-                                ) : noticeComments.length === 0 ? (
+                                )}
+                                <div className="space-y-4">
+                                    <FieldRow label="Issuing Authority" value={formData.authority} onChange={(v) => setFormData({ ...formData, authority: v })} placeholder="e.g., GST Department, Maharashtra" confidence={notice.confidence as Confidence} required />
+                                    <FieldRow label="Notice Type" value={formData.noticeType} onChange={(v) => setFormData({ ...formData, noticeType: v })} placeholder="e.g., Show Cause Notice" confidence={notice.confidence as Confidence} required />
+                                    <FieldRow label="Amount Demanded (₹)" value={formData.amount} onChange={(v) => setFormData({ ...formData, amount: v })} type="number" placeholder="250000" confidence={notice.confidence as Confidence} />
+                                    <FieldRow label="Response Deadline" value={formData.deadline} onChange={(v) => setFormData({ ...formData, deadline: v })} type="date" confidence={notice.confidence as Confidence} required />
+                                    <FieldRow label="Section / Act" value={formData.section} onChange={(v) => setFormData({ ...formData, section: v })} placeholder="e.g., Section 74 of CGST Act" confidence={notice.confidence as Confidence} />
+                                    <FieldRow label="Financial Year" value={formData.financialYear} onChange={(v) => setFormData({ ...formData, financialYear: v })} placeholder="e.g., 2023-24" confidence={notice.confidence as Confidence} />
+                                </div>
+
+                                {notice.summary && (
+                                    <>
+                                        <Separator className="my-4" />
+                                        <Card className="bg-muted/50">
+                                            <CardHeader className="pb-2">
+                                                <CardTitle className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">AI Extracted Summary</CardTitle>
+                                            </CardHeader>
+                                            <CardContent>
+                                                <p className="text-sm text-foreground leading-relaxed">{notice.summary}</p>
+                                            </CardContent>
+                                        </Card>
+                                    </>
+                                )}
+
+                                <Separator className="my-4" />
+                                <div className="grid grid-cols-2 gap-3 rounded-lg border border-border bg-muted/30 p-4 text-xs">
+                                    <div><p className="font-medium text-muted-foreground mb-1">Status</p><p className="capitalize font-medium">{notice.status.replace("_", " ")}</p></div>
+                                    <div><p className="font-medium text-muted-foreground mb-1">Source</p><p className="capitalize font-medium">{notice.source}</p></div>
+                                    {notice.verifiedBy && <div><p className="font-medium text-muted-foreground mb-1">Verified By</p><p className="font-medium">{notice.verifiedBy}</p></div>}
+                                </div>
+                                {/* Assignment */}
+                                <div className="mt-4 space-y-1.5">
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Assign Operator</Label>
+                                    <AssigneeSelect
+                                        noticeId={noticeId}
+                                        currentAssignee={notice.assignedTo ?? null}
+                                        onAssigned={() => void refetch()}
+                                    />
+                                </div>
+                                <Separator className="my-4" />
+                                <Button
+                                    variant="outline"
+                                    className="w-full text-destructive border-destructive/50 hover:bg-destructive/10 disabled:opacity-50"
+                                    onClick={() => flagTemplateMutation.mutate({ id: noticeId })}
+                                    disabled={flagTemplateMutation.isPending || notice.hasTemplateIssue === true}
+                                >
+                                    {flagTemplateMutation.isPending ? (
+                                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                    ) : (
+                                        <Flag className="mr-2 h-4 w-4" />
+                                    )}
+                                    {notice.hasTemplateIssue ? "Template Issue Reported" : "Report Extraction Issue"}
+                                </Button>
+                            </TabsContent>
+
+                            {/* ── Comments Tab ── */}
+                            <TabsContent value="comments" className="flex h-full flex-col overflow-hidden p-0">
+                                {/* Comment thread */}
+                                <div className="flex-1 overflow-y-auto p-4 space-y-3">
+                                    {!noticeComments ? (
+                                        <div className="space-y-2">
+                                            {[...Array(2)].map((_, i) => <Skeleton key={i} className="h-16 w-full" />)}
+                                        </div>
+                                    ) : noticeComments.length === 0 ? (
+                                        <div className="flex flex-col items-center justify-center py-12 text-center">
+                                            <MessageSquare className="mb-3 h-8 w-8 text-muted-foreground/50" />
+                                            <p className="text-sm text-muted-foreground">No comments yet</p>
+                                        </div>
+                                    ) : (
+                                        noticeComments.map((c) => (
+                                            <div key={c.id} className="group relative rounded-lg border border-border bg-muted/30 p-3">
+                                                <div className="flex items-start justify-between gap-2">
+                                                    <div className="flex-1">
+                                                        <p className="text-xs font-medium text-muted-foreground">
+                                                            {c.userId ?? "Staff"} · {formatDate(c.createdAt)}
+                                                        </p>
+                                                        <p className="mt-1 text-sm text-foreground">{c.content}</p>
+                                                    </div>
+                                                    <Button
+                                                        size="icon"
+                                                        variant="ghost"
+                                                        className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
+                                                        onClick={() => deleteCommentMutation.mutate({ id: c.id })}
+                                                    >
+                                                        <Trash2 className="h-3 w-3" />
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                        ))
+                                    )}
+                                </div>
+                                {/* Comment input */}
+                                <div className="border-t border-border p-4 bg-muted/10">
+                                    <div className="flex gap-2 relative">
+                                        <Input
+                                            placeholder="Add an internal comment…"
+                                            value={commentText}
+                                            onChange={(e) => setCommentText(e.target.value)}
+                                            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleAddComment(); } }}
+                                            className="flex-1 pr-10"
+                                        />
+                                        <Button
+                                            size="sm"
+                                            className="absolute right-1 top-1 h-8 w-8 p-0"
+                                            onClick={handleAddComment}
+                                            disabled={!commentText.trim() || createCommentMutation.isPending}
+                                        >
+                                            {createCommentMutation.isPending
+                                                ? <Loader2 className="h-4 w-4 animate-spin" />
+                                                : <Send className="h-4 w-4" />}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </TabsContent>
+
+                            {/* ── Timeline Tab ── */}
+                            <TabsContent value="timeline" className="flex-1 overflow-y-auto p-4">
+                                {!auditTrail ? (
+                                    <div className="space-y-3">
+                                        {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-14 w-full" />)}
+                                    </div>
+                                ) : auditTrail.length === 0 ? (
                                     <div className="flex flex-col items-center justify-center py-12 text-center">
-                                        <MessageSquare className="mb-3 h-8 w-8 text-muted-foreground/50" />
-                                        <p className="text-sm text-muted-foreground">No comments yet</p>
+                                        <Clock className="mb-3 h-8 w-8 text-muted-foreground/50" />
+                                        <p className="text-sm text-muted-foreground">No activity recorded yet</p>
                                     </div>
                                 ) : (
-                                    noticeComments.map((c) => (
-                                        <div key={c.id} className="group relative rounded-lg border border-border bg-muted/30 p-3">
-                                            <div className="flex items-start justify-between gap-2">
-                                                <div className="flex-1">
-                                                    <p className="text-xs font-medium text-muted-foreground">
-                                                        {c.userId ?? "Staff"} · {formatDate(c.createdAt)}
-                                                    </p>
-                                                    <p className="mt-1 text-sm text-foreground">{c.content}</p>
-                                                </div>
-                                                <Button
-                                                    size="icon"
-                                                    variant="ghost"
-                                                    className="h-6 w-6 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive"
-                                                    onClick={() => deleteCommentMutation.mutate({ id: c.id })}
-                                                >
-                                                    <Trash2 className="h-3 w-3" />
-                                                </Button>
-                                            </div>
-                                        </div>
-                                    ))
-                                )}
-                            </div>
-                            {/* Comment input */}
-                            <div className="border-t border-border p-4">
-                                <div className="flex gap-2">
-                                    <Input
-                                        placeholder="Add a comment…"
-                                        value={commentText}
-                                        onChange={(e) => setCommentText(e.target.value)}
-                                        onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void handleAddComment(); } }}
-                                        className="flex-1"
-                                    />
-                                    <Button
-                                        size="icon"
-                                        onClick={handleAddComment}
-                                        disabled={!commentText.trim() || createCommentMutation.isPending}
-                                    >
-                                        {createCommentMutation.isPending
-                                            ? <Loader2 className="h-4 w-4 animate-spin" />
-                                            : <Send className="h-4 w-4" />}
-                                    </Button>
-                                </div>
-                            </div>
-                        </TabsContent>
+                                    <div className="relative pl-5 mt-2">
+                                        {auditTrail.map((entry, i) => {
+                                            const label = ({
+                                                "notice.created": "Notice Created",
+                                                "notice.updated": "Fields Updated",
+                                                "notice.verified": "Marked as Verified",
+                                                "notice.assigned": "Assignee Changed",
+                                                "notice.status_updated": "Status Changed",
+                                                "notice.closed": "Notice Closed",
+                                                "notice.template_issue_flagged": "Template Issue Flagged",
+                                                "comment.added": "Comment Added",
+                                                "attachment.added": "File Attached",
+                                            } as Record<string, string>)[entry.action] ?? entry.action.replace(/[._]/g, " ");
 
-                        {/* ── Timeline Tab ── */}
-                        <TabsContent value="timeline" className="flex-1 overflow-y-auto p-4">
-                            {!auditTrail ? (
-                                <div className="space-y-3">
-                                    {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
-                                </div>
-                            ) : auditTrail.length === 0 ? (
-                                <div className="flex flex-col items-center justify-center py-12 text-center">
-                                    <Clock className="mb-3 h-8 w-8 text-muted-foreground/50" />
-                                    <p className="text-sm text-muted-foreground">No activity recorded yet</p>
-                                </div>
-                            ) : (
-                                <div className="relative space-y-0 pl-4">
-                                    {auditTrail.map((entry, i) => (
-                                        <div key={entry.id} className="relative pb-4">
-                                            {/* Vertical line */}
-                                            {i < auditTrail.length - 1 && (
-                                                <div className="absolute left-[-9px] top-6 h-full w-px bg-border" />
-                                            )}
-                                            {/* Dot */}
-                                            <div className="absolute left-[-13px] top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-card" />
-                                            <p className="text-sm font-medium text-foreground capitalize">
-                                                {entry.action.replace(/_/g, " ")}
-                                            </p>
-                                            <p className="text-xs text-muted-foreground">
-                                                {entry.userId} · {formatDate(entry.createdAt)}
-                                            </p>
-                                            {entry.newValue && (
-                                                <p className="mt-0.5 text-xs text-muted-foreground">→ {entry.newValue}</p>
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
-                        </TabsContent>
-                    </Tabs>
-                </div>
+                                            const dotColor = entry.action.includes("verified") ? "bg-green-500" :
+                                                entry.action.includes("closed") ? "bg-muted-foreground" :
+                                                    entry.action.includes("assigned") ? "bg-primary" :
+                                                        entry.action.includes("issue") ? "bg-destructive" :
+                                                            "bg-border";
+
+                                            return (
+                                                <div key={entry.id} className="relative pb-5 last:pb-0">
+                                                    {/* Connecting line */}
+                                                    {i < auditTrail.length - 1 && (
+                                                        <div className="absolute left-[-13px] top-5 h-full w-px bg-border" />
+                                                    )}
+                                                    {/* Dot */}
+                                                    <div className={`absolute left-[-17px] top-1.5 h-2.5 w-2.5 rounded-full ring-2 ring-card ${dotColor}`} />
+                                                    <p className="text-sm font-semibold text-foreground leading-snug">{label}</p>
+                                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                                        <span className="font-medium text-foreground/80">{entry.userId.slice(0, 12)}…</span> · {formatDate(entry.createdAt)}
+                                                    </p>
+                                                    {entry.newValue && (() => {
+                                                        try {
+                                                            const parsed = JSON.parse(entry.newValue) as Record<string, unknown>;
+                                                            return (
+                                                                <div className="mt-1.5 rounded bg-muted/60 border border-border/40 px-2.5 py-1.5 text-xs text-muted-foreground">
+                                                                    {Object.entries(parsed).map(([k, v]) => (
+                                                                        <span key={k}><span className="font-medium text-foreground/80 capitalize">{k.replace(/([A-Z])/g, " $1")}:</span> {String(v)}</span>
+                                                                    ))}
+                                                                </div>
+                                                            );
+                                                        } catch { return null; }
+                                                    })()}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </TabsContent>
+                        </Tabs>
+                    </ResizablePanel>
+                </ResizablePanelGroup>
             </div>
         </div>
     );

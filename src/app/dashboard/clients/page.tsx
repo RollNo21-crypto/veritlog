@@ -13,6 +13,7 @@ import {
     Trash2,
     Loader2,
     X,
+    Send,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Button } from "~/components/ui/button";
@@ -87,6 +88,17 @@ export default function ClientsPage() {
             void refetch();
         },
         onError: () => toast.error("Failed to delete client"),
+    });
+
+    const inviteMutation = api.clients.sendPortalInvite.useMutation({
+        onSuccess: (data) => {
+            if (data.alreadyInvited) {
+                toast.info("Client was already invited — resend not needed");
+            } else {
+                toast.success("Portal invite sent successfully!");
+            }
+        },
+        onError: (e) => toast.error(e.message || "Failed to send invite"),
     });
 
     const handleOpenCreate = () => {
@@ -195,8 +207,17 @@ export default function ClientsPage() {
                 <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
                     {filtered.map((client) => (
                         <Card key={client.id} className="group relative overflow-hidden">
-                            {/* Action buttons (hover reveal) */}
                             <div className="absolute right-3 top-3 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                                <Button
+                                    size="icon"
+                                    variant="ghost"
+                                    className="h-7 w-7 text-primary"
+                                    title="Invite to Portal"
+                                    onClick={() => inviteMutation.mutate({ clientId: client.id })}
+                                    disabled={inviteMutation.isPending || !client.contactEmail}
+                                >
+                                    {inviteMutation.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Send className="h-3.5 w-3.5" />}
+                                </Button>
                                 <Button
                                     size="icon"
                                     variant="ghost"

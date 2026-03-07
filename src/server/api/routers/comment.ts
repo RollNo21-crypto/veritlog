@@ -10,7 +10,7 @@ export const commentRouter = createTRPCRouter({
     list: protectedProcedure
         .input(z.object({ noticeId: z.string() }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) return [];
 
             return ctx.db
@@ -36,7 +36,7 @@ export const commentRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) throw new Error("No organization selected");
 
             const commentId = `comment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -59,7 +59,7 @@ export const commentRouter = createTRPCRouter({
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) throw new Error("No organization selected");
 
             await ctx.db

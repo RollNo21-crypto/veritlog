@@ -10,7 +10,7 @@ export const auditRouter = createTRPCRouter({
     listForNotice: protectedProcedure
         .input(z.object({ noticeId: z.string() }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) return [];
 
             return ctx.db
@@ -32,7 +32,7 @@ export const auditRouter = createTRPCRouter({
     listRecent: protectedProcedure
         .input(z.object({ limit: z.number().min(1).max(100).default(50) }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) return [];
 
             return ctx.db
@@ -64,7 +64,7 @@ export const auditRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) throw new Error("No organization selected");
 
             const logId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;

@@ -11,6 +11,8 @@ import {
     Clock,
     CheckCircle,
     Loader2,
+    Calendar,
+    Building2,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
@@ -32,11 +34,11 @@ const STATUS_OPTIONS: { value: NoticeStatus | "all"; label: string }[] = [
 const statusIcon = (status: string) => {
     switch (status) {
         case "review_needed":
-            return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+            return <AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-400" />;
         case "processing":
-            return <Loader2 className="h-4 w-4 animate-spin text-blue-500" />;
+            return <Loader2 className="h-4 w-4 animate-spin text-blue-600 dark:text-blue-400" />;
         case "verified":
-            return <CheckCircle className="h-4 w-4 text-green-500" />;
+            return <CheckCircle className="h-4 w-4 text-green-600 dark:text-green-400" />;
         case "in_progress":
             return <Clock className="h-4 w-4 text-primary" />;
         default:
@@ -45,12 +47,21 @@ const statusIcon = (status: string) => {
 };
 
 export default function ReviewQueuePage() {
-    const [statusFilter, setStatusFilter] = useState<NoticeStatus | "all">("all");
+    const [statusFilter, setStatusFilter] = useState<NoticeStatus | "all">("review_needed");
     const [searchQuery, setSearchQuery] = useState("");
+    const [sortBy, setSortBy] = useState<"createdAt" | "riskLevel">("riskLevel");
+    const [authorityFilter, setAuthorityFilter] = useState<string>("all");
 
     const { data: notices, isLoading } = api.notice.list.useQuery(
-        statusFilter === "all" ? undefined : { status: statusFilter }
+        {
+            status: statusFilter === "all" ? undefined : statusFilter,
+            sortBy: sortBy,
+            authority: authorityFilter === "all" ? undefined : authorityFilter,
+        }
     );
+
+    // Get unique authorities for the filter dropdown
+    const uniqueAuthorities = Array.from(new Set(notices?.map(n => n.authority).filter(Boolean))) as string[];
 
     // Client-side search filter
     const filteredNotices = notices?.filter((notice) => {
@@ -77,30 +88,55 @@ export default function ReviewQueuePage() {
             </div>
 
             {/* Filters */}
-            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="flex flex-wrap gap-2">
+            <div className="flex flex-col gap-3">
+                {/* Row 1: Status pills — horizontally scrollable, no wrap */}
+                <div className="flex gap-2 overflow-x-auto pb-1" style={{ scrollbarWidth: "none" }}>
                     {STATUS_OPTIONS.map((opt) => (
                         <Button
                             key={opt.value}
                             variant={statusFilter === opt.value ? "default" : "outline"}
                             size="sm"
+                            className="shrink-0"
                             onClick={() => setStatusFilter(opt.value)}
                         >
                             {opt.label}
                         </Button>
                     ))}
                 </div>
-                <div className="relative w-full sm:w-64">
-                    <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                        placeholder="Search notices..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="pl-9"
-                    />
+
+                {/* Row 2: dropdowns on the left, search anchored right */}
+                <div className="flex items-center gap-2">
+                    <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        value={authorityFilter}
+                        onChange={(e) => setAuthorityFilter(e.target.value)}
+                    >
+                        <option value="all">All Authorities</option>
+                        {uniqueAuthorities.map(auth => (
+                            <option key={auth} value={auth}>{auth}</option>
+                        ))}
+                    </select>
+
+                    <select
+                        className="h-9 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                        value={sortBy}
+                        onChange={(e) => setSortBy(e.target.value as "createdAt" | "riskLevel")}
+                    >
+                        <option value="riskLevel">Sort by Risk &amp; Urgency</option>
+                        <option value="createdAt">Sort by Newest</option>
+                    </select>
+
+                    <div className="relative ml-auto">
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Input
+                            placeholder="Search notices..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="pl-9 w-56"
+                        />
+                    </div>
                 </div>
             </div>
-
             {/* Notice List */}
             {isLoading ? (
                 <div className="space-y-3">
@@ -183,13 +219,13 @@ export default function ReviewQueuePage() {
                                                 }
                                                 className="text-xs"
                                             >
-                                                {notice.confidence}
+                                                {notice.confidence} Match
                                             </Badge>
                                         )}
-                                        {notice.riskLevel && notice.riskLevel !== "low" && (
+                                        {notice.riskLevel && (
                                             <Badge
-                                                variant={notice.riskLevel === "high" ? "destructive" : "secondary"}
-                                                className="text-xs"
+                                                variant={notice.riskLevel === "high" ? "destructive" : notice.riskLevel === "medium" ? "secondary" : "outline"}
+                                                className={`text-xs ${sortBy === "riskLevel" && notice.riskLevel === "high" ? "animate-pulse shadow-md" : ""}`}
                                             >
                                                 {notice.riskLevel} risk
                                             </Badge>

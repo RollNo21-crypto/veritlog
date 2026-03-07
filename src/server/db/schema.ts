@@ -1,5 +1,4 @@
-import { sql } from "drizzle-orm";
-import { pgTable, text, integer, timestamp } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, boolean } from "drizzle-orm/pg-core";
 
 // ─── Tenants (CA Firms) ───────────────────────────────────────────────────────
 export const tenants = pgTable("tenants", {
@@ -55,7 +54,8 @@ export const notices = pgTable("notices", {
 
     // Workflow
     status: text("status").notNull().default("processing"),
-    // "processing" | "review_needed" | "verified" | "in_progress" | "closed"
+    // "processing" | "review_needed" | "verified" | "in_progress" | "closed" | "approval_pending" | "approved"
+    hasTemplateIssue: boolean("has_template_issue").notNull().default(false),
     source: text("source").notNull().default("upload"), // "upload" | "email"
     assignedTo: text("assigned_to"), // Clerk user ID
     verifiedBy: text("verified_by"), // Clerk user ID

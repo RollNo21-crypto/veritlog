@@ -1,6 +1,18 @@
 import "dotenv/config";
 import { db } from "../src/server/db/index";
 import { tenants, clients, notices } from "../src/server/db/schema";
+import { uploadToS3 } from "../src/server/services/storage";
+import { PDFDocument, rgb } from "pdf-lib";
+
+async function createMockPdf(title: string, summary: string): Promise<ArrayBuffer> {
+    const pdfDoc = await PDFDocument.create();
+    const page = pdfDoc.addPage([600, 400]);
+    page.drawText(title, { x: 50, y: 350, size: 24, color: rgb(0.8, 0.1, 0.1) });
+    page.drawText(summary, { x: 50, y: 300, size: 12, color: rgb(0, 0, 0) });
+    page.drawText("CONFIDENTIAL - SYSTEM GENERATED MOCK", { x: 50, y: 50, size: 10, color: rgb(0.5, 0.5, 0.5) });
+    const pdfBytes = await pdfDoc.save();
+    return (pdfBytes.buffer as ArrayBuffer).slice(pdfBytes.byteOffset, pdfBytes.byteLength + pdfBytes.byteOffset);
+}
 
 const seed = async () => {
     console.log("🌱 Starting database seeding...");
@@ -75,21 +87,23 @@ const seed = async () => {
     ]);
     console.log("✅ Created Clients");
 
-    // 3. Create realistic sample notices
-    await db.insert(notices).values([
+    // 3. Create realistic sample notices with ACTUAL S3 PDFs
+    console.log("📄 Generating and uploading mock PDF documents to S3...");
+
+    const mockNotices = [
         {
             id: "notice_881",
             tenantId,
             clientId: client1Id,
             fileName: "gst_show_cause_march2024.pdf",
-            fileUrl: "https://example.com/dummy.pdf", // Dummy URL
+            title: "GST Show Cause Notice",
             authority: "GST Department, Maharashtra",
             noticeType: "Show Cause Notice",
-            amount: 55000000, // ₹5,50,000 (stored in paise)
+            amount: 55000000,
             deadline: "2024-04-15",
             section: "Section 73 of CGST Act",
             financialYear: "2023-24",
-            summary: "Demand of ₹5.5L for mismatch in ITC claimed in GSTR-3B vs GSTR-2B.",
+            summary: "Demand of INR 5.5L for mismatch in ITC claimed in GSTR-3B vs GSTR-2B.",
             confidence: "high",
             riskLevel: "high",
             status: "review_needed",
@@ -100,10 +114,10 @@ const seed = async () => {
             tenantId,
             clientId: client2Id,
             fileName: "income_tax_demand_ay22_23.pdf",
-            fileUrl: "https://example.com/dummy.pdf",
+            title: "Income Tax Demand",
             authority: "Income Tax Department",
             noticeType: "Demand Notice",
-            amount: 1500000, // ₹15,000
+            amount: 1500000,
             deadline: "2024-03-30",
             section: "Section 143(1)(a)",
             financialYear: "2021-22",
@@ -117,8 +131,8 @@ const seed = async () => {
             id: "notice_883",
             tenantId,
             clientId: client1Id,
-            fileName: "customs_query_import_dec.jpg",
-            fileUrl: "https://example.com/dummy.pdf",
+            fileName: "customs_query_import_dec.pdf",
+            title: "Customs Query Memo",
             authority: "Customs Authority, Nhava Sheva",
             noticeType: "Query Memo",
             amount: null,
@@ -136,10 +150,10 @@ const seed = async () => {
             tenantId,
             clientId: client3Id,
             fileName: "pf_compliance_delay.pdf",
-            fileUrl: "https://example.com/dummy.pdf",
+            title: "EPFO Compliance Alert",
             authority: "EPFO",
             noticeType: "Compliance Notice",
-            amount: 4500000, // ₹45,000
+            amount: 4500000,
             deadline: "2024-05-10",
             section: "Section 14B of EPF Act",
             financialYear: "2023-24",
@@ -149,7 +163,26 @@ const seed = async () => {
             status: "in_progress",
             source: "email",
         }
-    ]);
+    ];
+
+    const finalNotices = [];
+    for (const notice of mockNotices) {
+        // Generate a real binary PDF
+        const pdfBuffer = await createMockPdf(notice.title, notice.summary);
+        const objectKey = `${tenantId}/${notice.id}/${notice.fileName}`;
+
+        // Upload to configured S3 bucket
+        const uploadResult = await uploadToS3(objectKey, pdfBuffer, "application/pdf");
+        console.log(`  Uploaded ${notice.fileName} -> ${uploadResult.fileUrl}`);
+
+        const { title, ...dbNotice } = notice;
+        finalNotices.push({
+            ...dbNotice,
+            fileUrl: uploadResult.fileUrl // Use the actual proxy URL hooked up to real S3
+        });
+    }
+
+    await db.insert(notices).values(finalNotices);
     console.log("✅ Created Sample Notices");
 
     console.log("🎉 Seeding complete! You can now view this data in the Dashboard UI.");

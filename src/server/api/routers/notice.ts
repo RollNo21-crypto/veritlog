@@ -2,8 +2,10 @@ import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { extractNoticeData } from "~/server/services/extraction";
 import { uploadToS3, dataUrlToBuffer, getFileViewUrl } from "~/server/services/storage";
-import { notices } from "~/server/db/schema";
-import { eq, and, isNull, desc } from "drizzle-orm";
+import { alertHighRisk } from "~/server/services/whatsapp";
+import { generateShareToken } from "~/server/services/shareToken";
+import { notices, auditLogs, attachments } from "~/server/db/schema";
+import { eq, and, isNull, desc, asc, sql } from "drizzle-orm";
 
 /**
  * Calculate risk level based on deadline proximity and amount.
@@ -49,7 +51,7 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
@@ -71,7 +73,7 @@ export const noticeRouter = createTRPCRouter({
             }
 
             // Run AI extraction (uses file URL or base64 content)
-            const extraction = await extractNoticeData(fileUrl, "mock");
+            const extraction = await extractNoticeData(fileUrl, "parallel");
             const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
             const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
             const status = extraction.confidence === "low" ? "review_needed" : "processing";
@@ -98,6 +100,19 @@ export const noticeRouter = createTRPCRouter({
                 updatedAt: new Date(),
             });
 
+            // 🔔 Fire WhatsApp high-risk alert (non-blocking, best-effort)
+            if (riskLevel === "high") {
+                const shareToken = generateShareToken(noticeId, tenantId);
+                void alertHighRisk({
+                    noticeId,
+                    noticeType: extraction.data.noticeType,
+                    authority: extraction.data.authority,
+                    deadline: extraction.data.deadline,
+                    amount: amountPaise,
+                    deepLinkToken: shareToken,
+                });
+            }
+
             return {
                 noticeId,
                 extraction: extraction.data,
@@ -119,12 +134,14 @@ export const noticeRouter = createTRPCRouter({
                         .enum(["processing", "review_needed", "verified", "in_progress", "closed"])
                         .optional(),
                     clientId: z.string().optional(),
+                    authority: z.string().optional(),
                     riskLevel: z.enum(["high", "medium", "low"]).optional(),
+                    sortBy: z.enum(["createdAt", "riskLevel"]).default("createdAt"),
                 })
                 .optional()
         )
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) {
                 return [];
             }
@@ -139,15 +156,36 @@ export const noticeRouter = createTRPCRouter({
             if (input?.clientId) {
                 conditions.push(eq(notices.clientId, input.clientId));
             }
+            if (input?.authority) {
+                conditions.push(eq(notices.authority, input.authority));
+            }
             if (input?.riskLevel) {
                 conditions.push(eq(notices.riskLevel, input.riskLevel));
+            }
+
+            let orderByClause;
+            if (input?.sortBy === "riskLevel") {
+                // Map risk levels to numbers for proper sorting (high=1, medium=2, low=3)
+                // then sort chronologically by deadline within those tiers
+                orderByClause = [
+                    sql`CASE 
+                        WHEN ${notices.riskLevel} = 'high' THEN 1
+                        WHEN ${notices.riskLevel} = 'medium' THEN 2
+                        WHEN ${notices.riskLevel} = 'low' THEN 3
+                        ELSE 4 
+                    END`,
+                    asc(notices.deadline),
+                    desc(notices.createdAt)
+                ];
+            } else {
+                orderByClause = [desc(notices.createdAt)];
             }
 
             return await ctx.db
                 .select()
                 .from(notices)
                 .where(and(...conditions))
-                .orderBy(desc(notices.createdAt));
+                .orderBy(...orderByClause);
         }),
 
     /**
@@ -156,7 +194,7 @@ export const noticeRouter = createTRPCRouter({
     getById: protectedProcedure
         .input(z.object({ id: z.string() }))
         .query(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
@@ -193,7 +231,7 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
@@ -235,28 +273,44 @@ export const noticeRouter = createTRPCRouter({
     verify: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             const userId = ctx.session.userId;
 
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
 
-            await ctx.db
-                .update(notices)
-                .set({
-                    status: "verified",
-                    verifiedBy: userId,
-                    verifiedAt: new Date(),
-                    updatedAt: new Date(),
-                })
-                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        status: "verified",
+                        verifiedBy: userId,
+                        verifiedAt: new Date(),
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.verified",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ status: "verified" }),
+                    createdAt: new Date(),
+                });
+            });
 
             return { success: true };
         }),
 
     /**
      * Update notice status (for Kanban drag-and-drop)
+     * Includes Immutable Audit Logging
      */
     updateStatus: protectedProcedure
         .input(
@@ -266,82 +320,175 @@ export const noticeRouter = createTRPCRouter({
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
 
-            const updateData: Record<string, unknown> = {
-                status: input.status,
-                updatedAt: new Date(),
-            };
+            await ctx.db.transaction(async (tx) => {
+                const existing = await tx.query.notices.findFirst({
+                    where: and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)),
+                    columns: { status: true }
+                });
+                const oldStatus = existing?.status || "unknown";
 
-            // Track closure
-            if (input.status === "closed") {
-                updateData.closedAt = new Date();
-                updateData.closedBy = ctx.session.userId;
-            }
+                const updateData: Record<string, unknown> = {
+                    status: input.status,
+                    updatedAt: new Date(),
+                };
 
-            await ctx.db
-                .update(notices)
-                .set(updateData)
-                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+                if (input.status === "closed") {
+                    updateData.closedAt = new Date();
+                    updateData.closedBy = userId;
+                }
+
+                await tx
+                    .update(notices)
+                    .set(updateData)
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.status_updated",
+                    entityType: "notice",
+                    entityId: input.id,
+                    previousValue: JSON.stringify({ status: oldStatus }),
+                    newValue: JSON.stringify({ status: input.status }),
+                    createdAt: new Date(),
+                });
+            });
 
             return { success: true };
         }),
 
     /**
-     * Assign notice to a staff member
+     * Assign (or unassign) a notice to a staff member (FR12)
      */
     assign: protectedProcedure
         .input(
             z.object({
                 id: z.string(),
-                assignedTo: z.string(),
+                assignedTo: z.string().nullable(), // Clerk user ID, or null to unassign
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
-            if (!tenantId) {
-                throw new Error("No organization or user selected");
-            }
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
 
-            await ctx.db
-                .update(notices)
-                .set({
-                    assignedTo: input.assignedTo,
-                    updatedAt: new Date(),
-                })
-                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            await ctx.db.transaction(async (tx) => {
+                const [existing] = await tx
+                    .select({ assignedTo: notices.assignedTo })
+                    .from(notices)
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                if (!existing) throw new Error("Notice not found");
+
+                await tx
+                    .update(notices)
+                    .set({ assignedTo: input.assignedTo, updatedAt: new Date() })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.assigned",
+                    entityType: "notice",
+                    entityId: input.id,
+                    previousValue: JSON.stringify({ assignedTo: existing.assignedTo }),
+                    newValue: JSON.stringify({ assignedTo: input.assignedTo }),
+                    createdAt: new Date(),
+                });
+            });
 
             return { success: true };
         }),
 
     /**
-     * Close a notice with an optional reason (closing workflow)
+     * Close a notice with mandatory proof of action (FR14 — Story 3.4)
+     * Requires EITHER a response document OR a challan/reference number.
      */
     close: protectedProcedure
         .input(
             z.object({
                 id: z.string(),
-                closeReason: z.string().optional(),
+                closeReason: z.string().min(1),
+                challanNumber: z.string().optional(),
+                // Optional: base64 data URL of the proof document
+                proofFileData: z.string().optional(),
+                proofFileName: z.string().optional(),
+                proofFileSize: z.number().optional(),
             })
         )
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
             if (!tenantId) throw new Error("No organization or user selected");
 
-            await ctx.db
-                .update(notices)
-                .set({
-                    status: "closed",
-                    closedAt: new Date(),
-                    closedBy: ctx.session.userId,
-                    // Store close reason in summary for audit trail
-                    ...(input.closeReason ? { summary: `Closed: ${input.closeReason}` } : {}),
-                    updatedAt: new Date(),
-                })
-                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            // At least one form of proof is required
+            if (!input.challanNumber && !input.proofFileData) {
+                throw new Error("Proof of action required: upload a document or enter a challan/reference number.");
+            }
+
+            let proofFileUrl: string | null = null;
+
+            // Upload proof document to S3 if provided
+            if (input.proofFileData && input.proofFileName) {
+                const { buffer, contentType } = dataUrlToBuffer(input.proofFileData);
+                const fileKey = `${tenantId}/proof/${input.id}/${Date.now()}_${input.proofFileName}`;
+                const { fileUrl, fileHash } = await uploadToS3(fileKey, buffer, contentType);
+                proofFileUrl = fileUrl;
+
+                const attachmentId = `attach_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await ctx.db.insert(attachments).values({
+                    id: attachmentId,
+                    noticeId: input.id,
+                    tenantId,
+                    userId,
+                    fileName: input.proofFileName,
+                    fileUrl,
+                    fileSize: input.proofFileSize ?? null,
+                    fileHash,
+                    createdAt: new Date(),
+                });
+            }
+
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        status: "closed",
+                        closedAt: new Date(),
+                        closedBy: userId,
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.closed",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({
+                        reason: input.closeReason,
+                        challan: input.challanNumber ?? null,
+                        proofUploaded: !!proofFileUrl,
+                        proofUrl: proofFileUrl,
+                    }),
+                    createdAt: new Date(),
+                });
+            });
 
             return { success: true };
         }),
@@ -352,7 +499,7 @@ export const noticeRouter = createTRPCRouter({
     delete: protectedProcedure
         .input(z.object({ id: z.string() }))
         .mutation(async ({ ctx, input }) => {
-            const tenantId = ctx.session.orgId || ctx.session.userId;
+            const tenantId = ctx.session.userId;
             if (!tenantId) {
                 throw new Error("No organization or user selected");
             }
@@ -372,7 +519,7 @@ export const noticeRouter = createTRPCRouter({
      * Dashboard stats for current tenant
      */
     stats: protectedProcedure.query(async ({ ctx }) => {
-        const tenantId = ctx.session.orgId || ctx.session.userId;
+        const tenantId = ctx.session.userId;
         if (!tenantId) {
             return { total: 0, reviewNeeded: 0, processing: 0, verified: 0, inProgress: 0, closed: 0, highRisk: 0 };
         }
@@ -395,4 +542,80 @@ export const noticeRouter = createTRPCRouter({
             highRisk: allNotices.filter((n) => n.riskLevel === "high").length,
         };
     }),
+
+
+
+    /**
+     * Flag a template issue for dev team review
+     */
+    flagTemplateIssue: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+
+            if (!tenantId) {
+                throw new Error("No organization or user selected");
+            }
+
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        hasTemplateIssue: true,
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.template_issue_flagged",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ hasTemplateIssue: true }),
+                    createdAt: new Date(),
+                });
+            });
+
+            // Mock Dev Team Alert
+            console.warn(`[DEV ALERT] Template Issue flagged by user ${userId} for Notice ${input.id}`);
+
+            return { success: true };
+        }),
+
+    /**
+     * Client approves a drafted response (FR18 — Story 4.4)
+     */
+    approveResponse: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({ status: "approved", updatedAt: new Date() })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.approved",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ status: "approved", approvedBy: userId }),
+                    createdAt: new Date(),
+                });
+            });
+
+            return { success: true };
+        }),
 });

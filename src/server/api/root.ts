@@ -3,6 +3,8 @@ import { noticeRouter } from "~/server/api/routers/notice";
 import { clientRouter } from "~/server/api/routers/client";
 import { commentRouter } from "~/server/api/routers/comment";
 import { auditRouter } from "~/server/api/routers/audit";
+import { statsRouter } from "~/server/api/routers/stats";
+import { membersRouter } from "~/server/api/routers/members";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
@@ -16,6 +18,8 @@ export const appRouter = createTRPCRouter({
   clients: clientRouter,
   comment: commentRouter,
   audit: auditRouter,
+  stats: statsRouter,
+  members: membersRouter,
 });
 
 // export type definition of API
