@@ -43,6 +43,7 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "react-dropzone": "^15.0.0",
+    "react-markdown": "^10.1.0",
     "react-pdf": "^9.2.1",
     "react-resizable-panels": "^4.7.0",
     "server-only": "^0.0.1",

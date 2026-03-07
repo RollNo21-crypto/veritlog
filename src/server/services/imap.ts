@@ -12,7 +12,8 @@ import { simpleParser } from "mailparser";
 import { extractNoticeData } from "~/server/services/extraction";
 import { uploadToS3 } from "~/server/services/storage";
 import { db } from "~/server/db";
-import { notices, auditLogs, tenants } from "~/server/db/schema";
+import { notices, auditLogs, tenants, clients } from "~/server/db/schema";
+import { eq, and, or, ilike } from "drizzle-orm";
 
 export type PollResult = {
     processed: number;
@@ -21,7 +22,10 @@ export type PollResult = {
     lastError?: string;
 };
 
-export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
+export async function pollEmailInbox(
+    tenantId: string,
+    mode: "parallel" | "mock" = "parallel"
+): Promise<PollResult> {
     const host = process.env.EMAIL_IMAP_HOST;
     const port = Number(process.env.EMAIL_IMAP_PORT ?? "993");
     const user = process.env.EMAIL_IMAP_USER;
@@ -74,85 +78,197 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
 
                     // Parse with mailparser — handles nested/forwarded emails correctly
                     const parsed = await simpleParser(msg.source as Buffer);
-                    const pdfAttachments = (parsed.attachments ?? []).filter(
-                        (a) => a.contentType === "application/pdf" || a.filename?.toLowerCase().endsWith(".pdf")
+                    const noticeAttachments = (parsed.attachments ?? []).filter(
+                        (a) => a.contentType === "application/pdf" ||
+                            a.contentType.startsWith("image/") ||
+                            a.filename?.toLowerCase().endsWith(".pdf") ||
+                            a.filename?.toLowerCase().match(/\.(jpg|jpeg|png)$/i)
                     );
 
-                    if (pdfAttachments.length === 0) {
-                        console.log(`⏭️ [IMAP] No PDFs in: "${subject}" | Marking seen and skipping...`);
-                        try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
-                        result.skipped++;
-                        continue;
-                    }
+                    console.log(`📎 [IMAP] Found ${noticeAttachments.length} valid attachment(s) (PDF/Image) out of ${parsed.attachments?.length ?? 0} total.`);
 
-                    for (const attachment of pdfAttachments) {
-                        const filename = attachment.filename ?? `notice_${Date.now()}.pdf`;
-                        const buffer = attachment.content; // Buffer from mailparser
+                    if (noticeAttachments.length === 0) {
+                        // 📧 Handle Email Intimations (No Attachments)
+                        console.log(`🔍 [IMAP] No attachments — checking body for intimation...`);
+                        const bodyText = (parsed.text || (typeof parsed.html === 'string' ? parsed.html.replace(/<[^>]*>?/gm, "") : "")).trim();
+                        if (bodyText.length < 50) {
+                            console.log(`⏭️ [IMAP] Skip: Body too short (${bodyText.length} chars) for: "${subject}"`);
+                            try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
+                            result.skipped++;
+                            continue;
+                        }
 
                         try {
-                            const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                            const s3Key = `${tenantId}/${noticeId}/${filename}`;
+                            console.log(`🤖  [IMAP/AI] Analyzing email body for intimation: "${subject}"`);
+                            const extraction = await extractNoticeData(null, mode, bodyText);
 
-                            console.log(`☁️  [IMAP/S3] Uploading PDF document '${filename}' to S3 storage...`);
-                            const s3Result = await uploadToS3(s3Key, buffer.buffer as ArrayBuffer, "application/pdf");
+                            if (extraction.data.isIntimation || extraction.data.extractedGstin || extraction.data.extractedPan) {
+                                const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                                console.log(`🎯 [IMAP/Intimation] AI confirmed notice-related content.`);
 
-                            console.log(`🤖  [IMAP/AI] Running AI extraction (Gemini/Bedrock) on '${filename}'...`);
-                            const dataUrl = `data:application/pdf;base64,${buffer.toString("base64")}`;
-                            const extraction = await extractNoticeData(dataUrl, "parallel");
+                                if (tenantId === "system") {
+                                    console.warn("⚠️ [IMAP] Using 'system' tenant ID for intimation. Check EMAIL_TENANT_ID in .env");
+                                }
 
-                            // Upsert tenant (FK constraint safety)
-                            await db.insert(tenants).values({
-                                id: tenantId,
-                                name: "CA Firm",
-                                plan: "free",
-                                createdAt: new Date(),
-                            }).onConflictDoNothing({ target: tenants.id });
+                                // 🔍 Try to find a matching client (Hierarchical: ID > Name)
+                                let matchedClientId: string | null = null;
+                                const extractionData = extraction.data;
 
-                            const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
-                            const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
-                            const status = extraction.confidence === "low" ? "review_needed" : "processing";
+                                const conditions = [];
+                                if (extractionData.extractedGstin) conditions.push(eq(clients.gstin, extractionData.extractedGstin));
+                                if (extractionData.extractedPan) conditions.push(eq(clients.pan, extractionData.extractedPan));
 
-                            console.log(`💾  [IMAP/DB] Inserting notice into database. (Confidence Level: ${extraction.confidence.toUpperCase()})`);
-                            await db.insert(notices).values({
-                                id: noticeId,
-                                tenantId,
-                                status,
-                                fileName: filename,
-                                fileUrl: s3Result.fileUrl,
-                                fileHash: s3Result.fileHash,
-                                noticeType: extraction.data.noticeType ?? null,
-                                authority: extraction.data.authority ?? null,
-                                section: extraction.data.section ?? null,
-                                financialYear: extraction.data.financialYear ?? null,
-                                amount: amountPaise,
-                                deadline: extraction.data.deadline ?? null,
-                                summary: extraction.data.summary ?? null,
-                                confidence: extraction.confidence,
-                                riskLevel,
-                                source: "email",
-                                createdAt: new Date(),
-                                updatedAt: new Date(),
-                            });
+                                // Add fuzzy name matches as fallback
+                                if (extractionData.extractedBusinessName) conditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                                if (extractionData.extractedContactName) conditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
 
-                            const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                            await db.insert(auditLogs).values({
-                                id: auditId,
-                                tenantId,
-                                userId: "system",
-                                action: "notice.created_via_email",
-                                entityType: "notice",
-                                entityId: noticeId,
-                                newValue: JSON.stringify({ source: "email", subject, filename }),
-                                createdAt: new Date(),
-                            });
+                                if (conditions.length > 0) {
+                                    const matchedClients = await db.select().from(clients).where(
+                                        and(eq(clients.tenantId, tenantId), or(...conditions))
+                                    ).limit(1);
 
-                            console.log(`✅  [IMAP] Successfully created notice: ${noticeId}`);
-                            result.processed++;
-                        } catch (pdfErr) {
-                            const errMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
-                            console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, errMsg);
+                                    if (matchedClients[0]) {
+                                        console.log(`🎯 [IMAP/Client] Found matching client: ${matchedClients[0].businessName}`);
+                                        matchedClientId = matchedClients[0].id;
+                                    }
+                                }
+
+                                // Upsert tenant
+                                await db.insert(tenants).values({
+                                    id: tenantId,
+                                    name: "CA Firm",
+                                    plan: "free",
+                                    createdAt: new Date(),
+                                }).onConflictDoNothing({ target: tenants.id });
+                                console.log(`✅ [IMAP] Tenant record verified (Intimation): ${tenantId}`);
+
+                                const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+                                const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
+
+                                await db.insert(notices).values({
+                                    id: noticeId,
+                                    tenantId,
+                                    clientId: matchedClientId,
+                                    status: "review_needed",
+                                    fileName: "Email Intimation (Manual Download Required)",
+                                    fileUrl: "#", // Placeholder
+                                    fileHash: "intimation",
+                                    noticeType: extraction.data.noticeType ?? "Portal Notification",
+                                    authority: extraction.data.authority ?? "GST Portal",
+                                    section: extraction.data.section ?? null,
+                                    financialYear: extraction.data.financialYear ?? null,
+                                    amount: amountPaise,
+                                    deadline: extraction.data.deadline ?? null,
+                                    summary: extraction.data.summary ?? "This notice was notified via email. Please log in to the portal to download the full document.",
+                                    confidence: extraction.confidence,
+                                    riskLevel,
+                                    isTranslated: extraction.data.isTranslated,
+                                    originalLanguage: extraction.data.originalLanguage,
+                                    source: "email", // Keeping as email for dashboard filtering
+                                    createdAt: new Date(),
+                                    updatedAt: new Date(),
+                                });
+
+                                console.log(`💾 [IMAP/DB] Successfully inserted intimation notice: ${noticeId}`);
+
+                                result.processed++;
+                                console.log(`✅  [IMAP] Intimation created: ${noticeId}`);
+                            } else {
+                                console.log(`⏭️ [IMAP] Skip: Not a notice-related email.`);
+                                result.skipped++;
+                            }
+                        } catch (err) {
+                            console.error(`❌ [IMAP] Error analyzing body: ${err}`);
                             result.failed++;
-                            result.lastError = errMsg;
+                        }
+                    } else {
+                        // 📎 Handle PDF / Image Attachments (Existing Logic)
+                        for (const attachment of noticeAttachments) {
+                            const filename = attachment.filename ?? `notice_${Date.now()}`;
+                            const buffer = attachment.content;
+                            const contentType = attachment.contentType || "application/octet-stream";
+
+                            try {
+                                const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                                const s3Key = `${tenantId}/${noticeId}/${filename}`;
+
+                                console.log(`☁️  [IMAP/S3] Uploading attachment '${filename}' (${contentType}) to S3 storage...`);
+                                const arrayBuffer = buffer.buffer.slice(buffer.byteOffset, buffer.byteOffset + buffer.byteLength) as ArrayBuffer;
+                                const s3Result = await uploadToS3(s3Key, arrayBuffer, contentType);
+
+                                console.log(`🤖  [IMAP/AI] Running AI extraction (${mode}) on '${filename}'...`);
+                                const bodyText = (parsed.text || (typeof parsed.html === 'string' ? parsed.html.replace(/<[^>]*>?/gm, "") : "")).trim();
+                                const dataUrl = `data:${contentType};base64,${buffer.toString("base64")}`;
+                                const extraction = await extractNoticeData(dataUrl, mode, bodyText);
+
+                                if (tenantId === "system") {
+                                    console.warn("⚠️ [IMAP] Using 'system' tenant ID. Notices may be invisible to specific CAs. Check EMAIL_TENANT_ID in .env");
+                                }
+
+                                // 🔍 Try to find a matching client (Hierarchical: ID > Name)
+                                let matchedClientId: string | null = null;
+                                const extractionData = extraction.data;
+
+                                const clientConditions = [];
+                                if (extractionData.extractedGstin) clientConditions.push(eq(clients.gstin, extractionData.extractedGstin));
+                                if (extractionData.extractedPan) clientConditions.push(eq(clients.pan, extractionData.extractedPan));
+
+                                // Add fuzzy name matches as fallback
+                                if (extractionData.extractedBusinessName) clientConditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                                if (extractionData.extractedContactName) clientConditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
+
+                                if (clientConditions.length > 0) {
+                                    const matchedClients = await db.select().from(clients).where(
+                                        and(eq(clients.tenantId, tenantId), or(...clientConditions))
+                                    ).limit(1);
+
+                                    if (matchedClients[0]) {
+                                        console.log(`🎯 [IMAP/Client] Found matching client: ${matchedClients[0].businessName}`);
+                                        matchedClientId = matchedClients[0].id;
+                                    }
+                                }
+
+                                await db.insert(tenants).values({
+                                    id: tenantId,
+                                    name: "CA Firm",
+                                    plan: "free",
+                                    createdAt: new Date(),
+                                }).onConflictDoNothing({ target: tenants.id });
+                                console.log(`✅ [IMAP] Tenant record verified (PDF): ${tenantId}`);
+
+                                const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+                                const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
+                                const status = extraction.confidence === "low" ? "review_needed" : "processing";
+
+                                await db.insert(notices).values({
+                                    id: noticeId,
+                                    tenantId,
+                                    clientId: matchedClientId,
+                                    status,
+                                    fileName: filename,
+                                    fileUrl: s3Result.fileUrl,
+                                    fileHash: s3Result.fileHash,
+                                    noticeType: extraction.data.noticeType ?? null,
+                                    authority: extraction.data.authority ?? null,
+                                    section: extraction.data.section ?? null,
+                                    financialYear: extraction.data.financialYear ?? null,
+                                    amount: amountPaise,
+                                    deadline: extraction.data.deadline ?? null,
+                                    summary: extraction.data.summary ?? null,
+                                    confidence: extraction.confidence,
+                                    riskLevel,
+                                    isTranslated: extraction.data.isTranslated,
+                                    originalLanguage: extraction.data.originalLanguage,
+                                    source: "email",
+                                    createdAt: new Date(),
+                                    updatedAt: new Date(),
+                                });
+
+                                result.processed++;
+                            } catch (pdfErr) {
+                                console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, pdfErr);
+                                result.failed++;
+                            }
                         }
                     }
 

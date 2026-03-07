@@ -25,6 +25,11 @@ export interface NoticeExtraction {
     requiredDocuments: string | null;
     extractedPan: string | null;
     extractedGstin: string | null;
+    extractedBusinessName: string | null;
+    extractedContactName: string | null;
+    isIntimation: boolean;
+    isTranslated: boolean;
+    originalLanguage: string | null;
 }
 
 export interface ExtractionResult {
@@ -47,13 +52,20 @@ Extract the following fields from the document and return ONLY valid JSON with n
   "deadline": "Response deadline in YYYY-MM-DD format or null",
   "section": "Relevant section/act e.g. Section 74 of CGST Act 2017 or null",
   "financialYear": "Financial year e.g. 2023-24 or null",
-  "summary": "One plain-English sentence summarising what this notice is about",
   "nextSteps": "Bullet points detailing the recommended next steps the CA/tax professional should take to resolve or reply to this notice",
   "requiredDocuments": "Bullet points listing exactly what documents or evidence the CA will need to collect from the client to draft the reply",
   "extractedPan": "The 10-character alphanumeric PAN (Permanent Account Number) of the taxpayer mentioned in the document or null",
-  "extractedGstin": "The 15-character alphanumeric GSTIN of the taxpayer mentioned in the document or null"
+  "extractedGstin": "The 15-character alphanumeric GSTIN of the taxpayer mentioned in the document or null",
+  "extractedBusinessName": "The name of the business or organization the notice is addressed to, or mentioned as the taxpayer",
+  "extractedContactName": "The name of the contact person, proprietor, or authorized signatory mentioned in the document",
+  "isIntimation": <boolean, true if this is just an email notification without the full document attached, false if it is a complete notice PDF>,
+  "isTranslated": <boolean, true if you had to translate the text from a non-English language (e.g. Hindi, Marathi, Tamil) to English>,
+  "originalLanguage": "The name of the original language if translated, otherwise null",
+  "summary": "A highly detailed, comprehensive paragraph (3-4 sentences) that deeply synthesizes key details from BOTH the email body (if provided) AND the attached document. Do NOT just summarize the email. You must extract the core facts from the attached document (like specific demands, sections, dates, background reasons, and actions required) and merge them with context from the email. Mention specific amounts, deadlines, and the core issue. IF the text was translated from a non-English language to English, you MUST append ' (Translated from [Language])' to the end of your summary. If it was already in English, do not add any note about translation."
 }
-If a field cannot be determined, use null. Return only the JSON object, nothing else.`;
+If a field cannot be determined, use null. Return only the JSON object, nothing else.
+IMPORTANT: You may receive both an email body AND an attached document (PDF/Image). Synthesize information from BOTH to provide the best summary and field extraction.
+If the notice is in a language other than English, translate the gist to English for the summary and fields, and set 'isTranslated' to true.`;
 
 // Create static clients
 const bedrock = new BedrockRuntimeClient({
@@ -75,8 +87,9 @@ const gemini = new GoogleGenAI({
  * Main extraction entry point. Runs both AIs concurrently.
  */
 export async function extractNoticeData(
-    fileUrl: string,
-    mode: "parallel" | "mock" = "parallel"
+    fileUrl: string | null,
+    mode: "parallel" | "mock" = "parallel",
+    emailText?: string
 ): Promise<ExtractionResult> {
     const startTime = Date.now();
 
@@ -89,8 +102,8 @@ export async function extractNoticeData(
 
         // Run both promises concurrently but don't fail if one crashes
         const [bedrockResult, geminiResult] = await Promise.allSettled([
-            extractWithBedrock(fileUrl, startTime),
-            extractWithGemini(fileUrl, startTime)
+            extractWithBedrock(fileUrl, startTime, emailText),
+            extractWithGemini(fileUrl, startTime, emailText)
         ]);
 
         let bestResult: ExtractionResult | null = null;
@@ -134,12 +147,13 @@ export async function extractNoticeData(
 // ─── Bedrock Nova Implementation ───────────────────────────────────────────────
 
 async function extractWithBedrock(
-    fileUrl: string,
-    startTime: number
+    fileUrl: string | null,
+    startTime: number,
+    emailText?: string
 ): Promise<ExtractionResult> {
     const messages: Message[] = [];
 
-    if (fileUrl.startsWith("data:")) {
+    if (fileUrl && fileUrl.startsWith("data:")) {
         const commaIdx = fileUrl.indexOf(",");
         const header = fileUrl.substring(5, commaIdx);
         const mimeType = header.split(";")[0] ?? "application/pdf";
@@ -158,7 +172,7 @@ async function extractWithBedrock(
                 role: "user",
                 content: [
                     { document: { name: "notice", format: "pdf", source: { bytes } } },
-                    { text: SYSTEM_INSTRUCTION },
+                    { text: emailText ? `EMAIL CONTEXT:\n${emailText}\n\n${SYSTEM_INSTRUCTION}` : SYSTEM_INSTRUCTION },
                 ],
             });
         } else {
@@ -166,14 +180,19 @@ async function extractWithBedrock(
                 role: "user",
                 content: [
                     { image: { format: format as "png" | "jpeg" | "gif" | "webp", source: { bytes } } },
-                    { text: SYSTEM_INSTRUCTION },
+                    { text: emailText ? `EMAIL CONTEXT:\n${emailText}\n\n${SYSTEM_INSTRUCTION}` : SYSTEM_INSTRUCTION },
                 ],
             });
         }
-    } else {
+    } else if (fileUrl) {
         messages.push({
             role: "user",
-            content: [{ text: `Document URL: ${fileUrl}\n\n${SYSTEM_INSTRUCTION}` }],
+            content: [{ text: `Document URL: ${fileUrl}` + (emailText ? `\n\nEMAIL CONTENT:\n${emailText}` : "") + `\n\n${SYSTEM_INSTRUCTION}` }],
+        });
+    } else if (emailText) {
+        messages.push({
+            role: "user",
+            content: [{ text: `EMAIL CONTENT:\n${emailText}\n\n${SYSTEM_INSTRUCTION}` }],
         });
     }
 
@@ -200,12 +219,13 @@ async function extractWithBedrock(
 // ─── Google Gemini Implementation ──────────────────────────────────────────────
 
 async function extractWithGemini(
-    fileUrl: string,
-    startTime: number
+    fileUrl: string | null,
+    startTime: number,
+    emailText?: string
 ): Promise<ExtractionResult> {
     let parts: any[] = [];
 
-    if (fileUrl.startsWith("data:")) {
+    if (fileUrl && fileUrl.startsWith("data:")) {
         const commaIdx = fileUrl.indexOf(",");
         const header = fileUrl.substring(5, commaIdx);
         const mimeType = header.split(";")[0] ?? "application/pdf";
@@ -217,9 +237,11 @@ async function extractWithGemini(
                 mimeType,
             },
         });
-        parts.push({ text: SYSTEM_INSTRUCTION });
-    } else {
-        parts.push({ text: `Document URL: ${fileUrl}\n\n${SYSTEM_INSTRUCTION}` });
+        parts.push({ text: emailText ? `EMAIL CONTEXT:\n${emailText}\n\n${SYSTEM_INSTRUCTION}` : SYSTEM_INSTRUCTION });
+    } else if (fileUrl) {
+        parts.push({ text: `Document URL: ${fileUrl}` + (emailText ? `\n\nEMAIL CONTENT:\n${emailText}` : "") + `\n\n${SYSTEM_INSTRUCTION}` });
+    } else if (emailText) {
+        parts.push({ text: `EMAIL CONTENT:\n${emailText}\n\n${SYSTEM_INSTRUCTION}` });
     }
 
     const response = await gemini.models.generateContent({
@@ -249,7 +271,7 @@ function extractMockData(startTime: number): ExtractionResult {
         data: {
             authority: "GST Department, Maharashtra",
             noticeType: "Show Cause Notice",
-            amount: 250000 * 100, // stored in paise
+            amount: 250000, // stored in INR (will be multiplied by 100 later)
             deadline: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split("T")[0] ?? null,
             section: "Section 74 of CGST Act, 2017",
             financialYear: "2023-24",
@@ -258,6 +280,11 @@ function extractMockData(startTime: number): ExtractionResult {
             requiredDocuments: "• GSTR-2A/2B reconciliations\n• Purchase invoices for disputed amount\n• Bank statements showing payment to suppliers",
             extractedPan: "ABCDE1234F",
             extractedGstin: "27ABCDE1234F1Z5",
+            extractedBusinessName: "Acme Corp India",
+            extractedContactName: "John Doe",
+            isIntimation: false,
+            isTranslated: false,
+            originalLanguage: null,
         },
         confidence: "medium",
         provider: "mock",
@@ -345,6 +372,107 @@ export async function translateNoticeDocument(fileUrl: string): Promise<string> 
     } catch (e) {
         console.error("[Translation/Bedrock] Failed to translate document:", e);
         throw new Error("Failed to translate document. Please try again.");
+    }
+}
+
+// ─── Draft Response Generator (Epic 7) ──────────────────────────────────────────
+
+export async function generateDraftResponse(
+    fileUrl: string,
+    noticeData: { type: string; authority: string; amount: string; deadline: string; gstin: string }
+): Promise<{ actionPlan: string; draftLetter: string }> {
+    try {
+        const DRAFT_PROMPT = `You are an expert Indian Tax Consultant / Chartered Accountant.
+Your task is to analyze the following tax notice document and generate a highly professional, legally sound Draft Response and an Action Plan for the client.
+
+Notice Context:
+- Type: ${noticeData.type}
+- Authority: ${noticeData.authority}
+- Demanded Amount: ${noticeData.amount}
+- Deadline: ${noticeData.deadline}
+- Client GSTIN: ${noticeData.gstin}
+
+Output your response STRICTLY as a valid JSON object with the following two keys. Do not wrap the JSON in markdown formatting blocks (\`\`\`json). Just return the raw JSON:
+
+{
+  "actionPlan": "A string containing a bulleted list (in Markdown) of 2-4 immediate steps the client/CA must take (e.g., specific documents to gather, ledgers to reconcile).",
+  "draftLetter": "A string containing a formal, complete letter (in Markdown) addressed to the issuing authority. Use placeholders like [Insert Date] where necessary. Keep the letter concise and focused on the core issues. Include subject line and formal sign-offs."
+}`;
+
+        const messages: Message[] = [];
+
+        if (fileUrl.startsWith("data:")) {
+            const commaIdx = fileUrl.indexOf(",");
+            const header = fileUrl.substring(5, commaIdx);
+            const mimeType = header.split(";")[0] ?? "application/pdf";
+            const base64Data = fileUrl.substring(commaIdx + 1);
+
+            const binaryStr = atob(base64Data);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i)!;
+            }
+
+            if (mimeType === "application/pdf") {
+                messages.push({
+                    role: "user",
+                    content: [
+                        { document: { name: "notice", format: "pdf", source: { bytes } } },
+                        { text: DRAFT_PROMPT },
+                    ],
+                });
+            } else {
+                const imgFormat = mimeType.replace("image/", "") as "png" | "jpeg" | "gif" | "webp";
+                messages.push({
+                    role: "user",
+                    content: [
+                        { image: { format: imgFormat, source: { bytes } } },
+                        { text: DRAFT_PROMPT },
+                    ],
+                });
+            }
+        } else {
+            messages.push({
+                role: "user",
+                content: [{ text: `Document URL: ${fileUrl}\n\n${DRAFT_PROMPT}` }],
+            });
+        }
+
+        const command = new ConverseCommand({
+            modelId: BEDROCK_MODEL_ID,
+            system: [{ text: "You are an expert, professional tax consultant drafting legal replies." }],
+            messages,
+            inferenceConfig: { temperature: 0.2, maxTokens: 4096 },
+        });
+
+        const response = await bedrock.send(command);
+        let draftText = response.output?.message?.content?.[0]?.text?.trim() ?? "";
+
+        if (!draftText) throw new Error("Bedrock returned empty draft response.");
+
+        if (draftText.startsWith("\`\`\`json")) {
+            draftText = draftText.substring(7);
+        } else if (draftText.startsWith("\`\`\`")) {
+            draftText = draftText.substring(3);
+        }
+        if (draftText.endsWith("\`\`\`")) {
+            draftText = draftText.substring(0, draftText.length - 3);
+        }
+        draftText = draftText.trim();
+
+        try {
+            const parsed = JSON.parse(draftText) as { actionPlan?: string; draftLetter?: string };
+            return {
+                actionPlan: parsed.actionPlan ?? "No action plan generated.",
+                draftLetter: parsed.draftLetter ?? "No draft letter generated."
+            };
+        } catch (err) {
+            console.error("Failed to parse Bedrock JSON response:", draftText, err);
+            throw new Error("Invalid response format from AI.");
+        }
+    } catch (e) {
+        console.error("[DraftResponse/Bedrock] Failed to generate draft:", e);
+        throw new Error("Failed to generate draft response. Please try again.");
     }
 }
 

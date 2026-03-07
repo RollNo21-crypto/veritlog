@@ -10,7 +10,7 @@ import { getPresignedUrl } from "~/server/services/storage";
  */
 export async function GET(
     req: NextRequest,
-    { params }: { params: Promise<{ noticeId: string }> }
+    { params }: { params: Promise<{ fileKey: string | string[] }> }
 ) {
     const session = await auth();
 
@@ -18,10 +18,11 @@ export async function GET(
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const { noticeId } = await params;
+    const resolvedParams = await params;
+    const keyParts = resolvedParams.fileKey;
 
-    // The param is the URL-encoded S3 key: tenant/noticeId/filename.pdf
-    const fileKey = decodeURIComponent(noticeId);
+    // The param is the unencoded S3 key split by slashes: ['tenant', 'noticeId', 'filename.pdf']
+    const fileKey = Array.isArray(keyParts) ? keyParts.join("/") : keyParts;
 
     try {
         // Generate a 1-hour presigned URL and redirect — no streaming needed

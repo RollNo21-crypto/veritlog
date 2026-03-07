@@ -6,6 +6,7 @@ import { ClerkProvider } from "@clerk/nextjs";
 import { clerkAppearance } from "~/lib/clerk-appearance";
 
 import { TRPCReactProvider } from "~/trpc/react";
+import { Toaster } from "~/components/ui/sonner";
 
 export const metadata: Metadata = {
   title: "VERITLOG - AI Tax Notice Management",
@@ -41,6 +42,7 @@ export default function RootLayout({
         </head>
         <body className="bg-background text-foreground font-sans antialiased">
           <TRPCReactProvider>{children}</TRPCReactProvider>
+          <Toaster />
         </body>
       </html>
     </ClerkProvider>

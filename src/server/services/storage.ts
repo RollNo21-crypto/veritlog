@@ -58,7 +58,7 @@ export async function uploadToS3(
     await upload.done();
 
     // Files are private; access is via the proxy route or presigned URLs
-    const fileUrl = `/api/files/${encodeURIComponent(fileKey)}`;
+    const fileUrl = getFileViewUrl(fileKey);
 
     return { fileUrl, fileKey, fileHash };
 }
@@ -84,8 +84,8 @@ export async function getPresignedUrl(fileKey: string, expiresInSeconds = 3600):
  * Return the internal proxy URL for viewing a file through the Next.js API route.
  * The API route validates Clerk session before retrieving from S3.
  */
-export function getFileViewUrl(noticeId: string): string {
-    return `/api/files/${noticeId}`;
+export function getFileViewUrl(fileKey: string): string {
+    return `/api/files/${fileKey}`;
 }
 
 /**

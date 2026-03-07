@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
-import { extractNoticeData, translateNoticeDocument } from "~/server/services/extraction";
+import { extractNoticeData, translateNoticeDocument, generateDraftResponse } from "~/server/services/extraction";
 import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
 import { generateShareToken } from "~/server/services/shareToken";
@@ -48,6 +48,7 @@ export const noticeRouter = createTRPCRouter({
                 fileType: z.string(),
                 fileData: z.string(), // base64 data URL or existing R2 key
                 clientId: z.string().optional(),
+                replaceNoticeId: z.string().optional(),
             })
         )
         .mutation(async ({ ctx, input }) => {
@@ -56,7 +57,7 @@ export const noticeRouter = createTRPCRouter({
                 throw new Error("No organization or user selected");
             }
 
-            const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const noticeId = input.replaceNoticeId ?? `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
             const fileKey = `${tenantId}/${noticeId}/${input.fileName}`;
 
             // Upload file to S3 (private bucket, accessed via presigned URL or proxy)
@@ -65,7 +66,7 @@ export const noticeRouter = createTRPCRouter({
             if (input.fileData.startsWith("data:")) {
                 const { buffer, contentType } = dataUrlToBuffer(input.fileData);
                 const s3Result = await uploadToS3(fileKey, buffer, contentType);
-                fileUrl = getFileViewUrl(noticeId); // Use proxy route for secure access
+                fileUrl = getFileViewUrl(fileKey); // Use proxy route for secure access
                 fileHash = s3Result.fileHash;
             } else {
                 // Already a URL (e.g., email attachment previously uploaded)
@@ -127,7 +128,7 @@ export const noticeRouter = createTRPCRouter({
                 }
             }
 
-            await ctx.db.insert(notices).values({
+            const noticeValues = {
                 id: noticeId,
                 tenantId,
                 clientId: input.clientId ?? null,
@@ -149,10 +150,22 @@ export const noticeRouter = createTRPCRouter({
                 status,
                 mismatchWarning,
                 isDuplicate,
+                isTranslated: extraction.data.isTranslated,
+                originalLanguage: extraction.data.originalLanguage,
                 source: "upload",
-                createdAt: new Date(),
                 updatedAt: new Date(),
-            });
+            };
+
+            if (input.replaceNoticeId) {
+                await ctx.db.update(notices)
+                    .set(noticeValues)
+                    .where(and(eq(notices.id, input.replaceNoticeId), eq(notices.tenantId, tenantId)));
+            } else {
+                await ctx.db.insert(notices).values({
+                    ...noticeValues,
+                    createdAt: new Date(),
+                });
+            }
 
             // 🔔 Fire WhatsApp high-risk alert (non-blocking, best-effort)
             if (riskLevel === "high" && !isDuplicate) {
@@ -384,6 +397,38 @@ export const noticeRouter = createTRPCRouter({
             const dataUrl = `data:${mimeType};base64,${fileBase64}`;
             const translation = await translateNoticeDocument(dataUrl);
             return { translation };
+        }),
+
+    /**
+     * Generate Draft Response (Epic 7)
+     */
+    generateDraftReply: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            const notice = await ctx.db
+                .select()
+                .from(notices)
+                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)))
+                .limit(1)
+                .then((res) => res[0]);
+
+            if (!notice) throw new Error("Notice not found");
+            if (!notice.fileUrl || notice.fileUrl === "#") throw new Error("No document available to analyze");
+
+            // Format data for the prompt
+            const noticeData = {
+                type: notice.noticeType ?? "Tax Notice",
+                authority: notice.authority ?? "Tax Department",
+                amount: notice.amount ? `₹${(notice.amount / 100).toLocaleString("en-IN")}` : "Not specified",
+                deadline: notice.deadline ?? "Not specified",
+                gstin: notice.clientId ?? "Not available" // Fallback to clientId since gstin is in the clients table
+            };
+
+            const { actionPlan, draftLetter } = await generateDraftResponse(notice.fileUrl, noticeData);
+            return { actionPlan, draftLetter };
         }),
 
     /**

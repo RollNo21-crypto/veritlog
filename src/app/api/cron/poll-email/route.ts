@@ -7,6 +7,8 @@ import { pollEmailInbox } from "~/server/services/imap";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
     const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");

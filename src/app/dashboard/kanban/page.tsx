@@ -8,8 +8,11 @@ import {
     DragOverlay,
     closestCorners,
     PointerSensor,
+    MouseSensor,
+    TouchSensor,
     useSensor,
     useSensors,
+    useDroppable,
     type DragStartEvent,
     type DragEndEvent,
 } from "@dnd-kit/core";
@@ -232,6 +235,10 @@ function KanbanColumn({
     notices: NoticeItem[];
     onClose: (notice: NoticeItem) => void;
 }) {
+    const { setNodeRef } = useDroppable({
+        id: column.id,
+    });
+
     return (
         <div className="flex flex-col gap-2">
             {/* Header */}
@@ -244,11 +251,14 @@ function KanbanColumn({
             </div>
 
             {/* Drop zone */}
-            <div className={`min-h-[180px] rounded-lg border-2 border-dashed p-2 ${column.bodyClass}`}>
+            <div
+                ref={setNodeRef}
+                className={`min-h-[200px] flex-1 rounded-lg border-2 border-dashed p-2 transition-colors ${column.bodyClass}`}
+            >
                 <SortableContext items={notices.map((n) => n.id)} strategy={verticalListSortingStrategy}>
                     {notices.length === 0 ? (
                         <div className="flex h-full items-center justify-center py-10">
-                            <p className="text-xs text-muted-foreground">Drop notices here</p>
+                            <p className="text-xs text-muted-foreground uppercase font-bold tracking-widest opacity-40">Drop here</p>
                         </div>
                     ) : (
                         <div className="space-y-2">
@@ -402,15 +412,45 @@ function CloseDialog({
 
 export default function WorkspacePage() {
     const { data: allNotices, isLoading, refetch } = api.notice.list.useQuery();
+    const utils = api.useUtils();
+
     const updateStatusMutation = api.notice.updateStatus.useMutation({
-        onSuccess: () => void refetch(),
-        onError: () => toast.error("Failed to move notice"),
+        onMutate: async (newNotice) => {
+            // Cancel any outgoing refetches (so they don't overwrite our optimistic update)
+            await utils.notice.list.cancel();
+
+            // Snapshot the previous value
+            const previousNotices = utils.notice.list.getData();
+
+            // Optimistically update to the new value
+            utils.notice.list.setData(undefined, (old) => {
+                if (!old) return [];
+                return old.map((n) =>
+                    n.id === newNotice.id ? { ...n, status: newNotice.status } : n
+                );
+            });
+
+            // Return a context object with the snapshotted value
+            return { previousNotices };
+        },
+        onError: (err, newNotice, context) => {
+            // If the mutation fails, use the context returned from onMutate to roll back
+            if (context?.previousNotices) {
+                utils.notice.list.setData(undefined, context.previousNotices);
+            }
+            toast.error("Failed to move notice");
+        },
+        onSettled: () => {
+            // Always refetch after error or success to ensure we're in sync with the server
+            void utils.notice.list.invalidate();
+        },
     });
+
     const closeMutation = api.notice.close.useMutation({
         onSuccess: () => {
             toast.success("Notice closed");
             setClosingNotice(null);
-            void refetch();
+            void utils.notice.list.invalidate();
         },
         onError: () => toast.error("Failed to close notice"),
     });
@@ -432,9 +472,17 @@ export default function WorkspacePage() {
         (n) => clientFilter === "all" || n.clientId === clientFilter
     );
 
-    const sensors = useSensors(
-        useSensor(PointerSensor, { activationConstraint: { distance: 8 } })
-    );
+    const mouseSensor = useSensor(MouseSensor, {
+        activationConstraint: { distance: 10 },
+    });
+    const touchSensor = useSensor(TouchSensor, {
+        activationConstraint: { delay: 250, tolerance: 5 },
+    });
+    const pointerSensor = useSensor(PointerSensor, {
+        activationConstraint: { distance: 10 },
+    });
+
+    const sensors = useSensors(mouseSensor, touchSensor, pointerSensor);
 
     const getColumn = useCallback(
         (status: NoticeStatus) => {

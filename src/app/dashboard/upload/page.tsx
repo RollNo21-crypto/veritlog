@@ -1,10 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, Suspense } from "react";
 import { useDropzone } from "react-dropzone";
+import { useSearchParams, useRouter } from "next/navigation";
 import { api } from "~/trpc/react";
-import { Upload, FileText, X, Loader2, CheckCircle, AlertTriangle, Building2 } from "lucide-react";
+import { Upload, FileText, X, Loader2, CheckCircle, AlertTriangle, Building2, Clock } from "lucide-react";
 import { Button } from "~/components/ui/button";
+import { toast } from "sonner";
 import { Badge } from "~/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Label } from "~/components/ui/label";
@@ -25,13 +27,21 @@ interface UploadedFile {
     error?: string;
 }
 
-export default function UploadPage() {
+function UploadPageContent() {
+    const searchParams = useSearchParams();
+    const router = useRouter();
+    const replaceNoticeId = searchParams.get("noticeId");
+
     const [files, setFiles] = useState<UploadedFile[]>([]);
     const [selectedClientId, setSelectedClientId] = useState<string>("none");
+    // ... (rest of the component logic)
+
     const uploadMutation = api.notice.upload.useMutation();
     const { data: clientList } = api.clients.list.useQuery();
 
     const onDrop = useCallback((acceptedFiles: File[]) => {
+        if (acceptedFiles.length === 0) return;
+
         const newFiles: UploadedFile[] = acceptedFiles.map((file) => ({
             file,
             status: "pending" as const,
@@ -39,12 +49,27 @@ export default function UploadPage() {
         setFiles((prev) => [...prev, ...newFiles]);
     }, []);
 
+    const onDropRejected = useCallback((fileRejections: any[]) => {
+        const errorMessages = fileRejections.map(rejection => {
+            const errors = rejection.errors.map((e: any) => e.message).join(", ");
+            return `${rejection.file.name}: ${errors}`;
+        });
+
+        errorMessages.forEach(msg => {
+            toast.error(msg);
+        });
+
+        console.error("Drop Rejected:", fileRejections);
+    }, []);
+
     const { getRootProps, getInputProps, isDragActive } = useDropzone({
         onDrop,
+        onDropRejected,
         accept: {
             "application/pdf": [".pdf"],
             "image/jpeg": [".jpg", ".jpeg"],
             "image/png": [".png"],
+            "image/webp": [".webp"],
         },
         multiple: true,
     });
@@ -52,6 +77,8 @@ export default function UploadPage() {
     const removeFile = (index: number) => {
         setFiles((prev) => prev.filter((_, i) => i !== index));
     };
+
+
 
     const handleUpload = async () => {
         for (let i = 0; i < files.length; i++) {
@@ -71,6 +98,7 @@ export default function UploadPage() {
                     fileType: uploadFile.file.type,
                     fileData: base64,
                     clientId: selectedClientId !== "none" ? selectedClientId : undefined,
+                    replaceNoticeId: replaceNoticeId ?? undefined,
                 });
 
                 setFiles((prev) =>
@@ -86,6 +114,11 @@ export default function UploadPage() {
                             : f
                     )
                 );
+
+                // If replacing, redirect back after a short delay
+                if (replaceNoticeId) {
+                    setTimeout(() => router.push(`/dashboard/verify/${replaceNoticeId}`), 1500);
+                }
             } catch (err) {
                 setFiles((prev) =>
                     prev.map((f, idx) =>
@@ -111,9 +144,17 @@ export default function UploadPage() {
             {/* Header */}
             <div className="border-b border-border pb-4">
                 <h1 className="text-3xl font-bold uppercase tracking-tight text-foreground">Upload Notices</h1>
-                <p className="mt-1 text-sm text-muted-foreground">
-                    Upload tax notice documents for AI-powered extraction and processing
-                </p>
+                <div className="mt-1 flex items-center justify-between gap-4">
+                    <p className="text-sm text-muted-foreground">
+                        Upload tax notice documents for AI-powered extraction and processing
+                    </p>
+                    {replaceNoticeId && (
+                        <Badge variant="secondary" className="bg-yellow-500/10 text-yellow-600 border-yellow-500/20 px-3 py-1 animate-pulse">
+                            <Clock className="mr-2 h-3 w-3" />
+                            Completing Intimation: {replaceNoticeId}
+                        </Badge>
+                    )}
+                </div>
             </div>
 
             {/* Client Picker */}
@@ -281,6 +322,19 @@ export default function UploadPage() {
                 </Card>
             )}
         </div>
+    );
+}
+
+export default function UploadPage() {
+    return (
+        <Suspense fallback={
+            <div className="flex flex-col items-center justify-center min-h-[400px] space-y-4">
+                <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                <p className="text-sm text-muted-foreground">Loading upload interface...</p>
+            </div>
+        }>
+            <UploadPageContent />
+        </Suspense>
     );
 }
 

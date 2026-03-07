@@ -60,6 +60,8 @@ export const notices = pgTable("notices", {
     hasTemplateIssue: boolean("has_template_issue").notNull().default(false),
     isDuplicate: boolean("is_duplicate").notNull().default(false),
     mismatchWarning: text("mismatch_warning"),
+    isTranslated: boolean("is_translated").notNull().default(false),
+    originalLanguage: text("original_language"),
     source: text("source").notNull().default("upload"), // "upload" | "email"
     assignedTo: text("assigned_to"), // Clerk user ID
     verifiedBy: text("verified_by"), // Clerk user ID

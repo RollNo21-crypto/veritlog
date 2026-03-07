@@ -8,6 +8,7 @@ import {
     ArrowLeft,
     Save,
     CheckCircle,
+    FileText,
     Flag,
     AlertTriangle,
     ChevronLeft,
@@ -26,6 +27,8 @@ import {
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
+import "react-pdf/dist/Page/TextLayer.css";
+import ReactMarkdown from "react-markdown";
 import "react-pdf/dist/Page/TextLayer.css";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
@@ -235,18 +238,19 @@ export default function VerifyNoticePage() {
         section: "",
         financialYear: "",
     });
+
     const [commentText, setCommentText] = useState("");
 
-    const [translationResult, setTranslationResult] = useState<string | null>(null);
-    const translateMutation = api.notice.translate.useMutation({
+    const [draftResult, setDraftResult] = useState<{ actionPlan: string; draftLetter: string } | null>(null);
+    const draftReplyMutation = api.notice.generateDraftReply.useMutation({
         onSuccess: (data) => {
-            setTranslationResult(data.translation);
-            toast.success("Document translated to English");
+            setDraftResult({ actionPlan: data.actionPlan, draftLetter: data.draftLetter });
+            toast.success("Draft response generated successfully");
         },
-        onError: () => toast.error("Failed to translate document"),
+        onError: () => toast.error("Failed to generate draft response"),
     });
 
-    const handleTranslate = () => translateMutation.mutate({ id: noticeId });
+    const handleGenerateDraft = () => draftReplyMutation.mutate({ id: noticeId });
 
     // PDF viewer state
     const [numPages, setNumPages] = useState<number | null>(null);
@@ -346,11 +350,7 @@ export default function VerifyNoticePage() {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
-                    <AssigneeSelect
-                        noticeId={noticeId}
-                        currentAssignee={notice.assignedTo ?? null}
-                        onAssigned={() => void refetch()}
-                    />
+
                     {/* Download Audit Report — Story 6.1 */}
                     {["verified", "closed", "approved"].includes(notice.status) && (
                         <Button
@@ -403,7 +403,7 @@ export default function VerifyNoticePage() {
                             </div>
                         )}
                         <div className="flex-1 overflow-auto p-4 flex items-start justify-center">
-                            {isPdf && notice.fileUrl && !pdfError ? (
+                            {isPdf && notice.fileUrl && notice.fileUrl !== "#" && !pdfError ? (
                                 <Document
                                     file={notice.fileUrl}
                                     onLoadSuccess={({ numPages }) => setNumPages(numPages)}
@@ -412,14 +412,42 @@ export default function VerifyNoticePage() {
                                 >
                                     <Page pageNumber={currentPage} scale={scale} className="shadow-lg border border-border/50" renderAnnotationLayer={false} renderTextLayer={false} />
                                 </Document>
-                            ) : isImage && notice.fileUrl ? (
+                            ) : isImage && notice.fileUrl && notice.fileUrl !== "#" ? (
                                 // eslint-disable-next-line @next/next/no-img-element
                                 <img src={notice.fileUrl} alt={notice.fileName ?? "Notice"} className="max-w-full rounded-lg shadow-md border border-border/50" />
+                            ) : notice.fileHash === 'intimation' ? (
+                                <div className="flex h-full items-center justify-center text-center p-8">
+                                    <div className="max-w-md space-y-4">
+                                        <div className="mx-auto w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
+                                            <UploadCloud className="h-8 w-8 text-primary" />
+                                        </div>
+                                        <div>
+                                            <h3 className="text-lg font-bold text-foreground">Manual Action Required</h3>
+                                            <p className="text-sm text-muted-foreground mt-2">
+                                                This is an **Email Intimation**. The GST portal has notified you of a notice, but did not attach the document.
+                                            </p>
+                                        </div>
+                                        <div className="bg-card border border-border rounded-lg p-4 text-left text-sm space-y-2">
+                                            <p className="font-semibold text-xs uppercase tracking-wider text-muted-foreground">Next Steps:</p>
+                                            <ol className="list-decimal list-inside space-y-1 text-muted-foreground">
+                                                <li>Log in to the <a href="https://services.gst.gov.in/services/login" target="_blank" className="text-primary underline">GST Portal</a></li>
+                                                <li>Navigate to Services &gt; User Services &gt; View Notices</li>
+                                                <li>Download the PDF and upload it here to complete the record</li>
+                                            </ol>
+                                        </div>
+                                        <Button className="w-full" asChild>
+                                            <Link href={`/dashboard/upload?noticeId=${notice.id}`}>
+                                                <UploadCloud className="mr-2 h-4 w-4" />
+                                                Upload PDF Document
+                                            </Link>
+                                        </Button>
+                                    </div>
+                                </div>
                             ) : (
                                 <div className="flex h-full items-center justify-center text-center">
                                     <div>
                                         <p className="text-sm font-medium text-muted-foreground">{pdfError ? "Failed to load PDF" : "No preview available"}</p>
-                                        {notice.fileUrl && (
+                                        {notice.fileUrl && notice.fileUrl !== "#" && (
                                             <a href={notice.fileUrl} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex text-xs text-primary underline">Open file directly</a>
                                         )}
                                     </div>
@@ -449,40 +477,55 @@ export default function VerifyNoticePage() {
                                     )}
                                 </TabsTrigger>
                                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
-                                <TabsTrigger value="translation" className="flex items-center gap-1.5">
+                                <TabsTrigger value="draft-reply" className="flex items-center gap-1.5">
                                     <MessageSquare className="h-3 w-3" />
-                                    Translation
+                                    Draft Reply
                                 </TabsTrigger>
                             </TabsList>
 
-                            {/* ── Translation Tab ── */}
-                            <TabsContent value="translation" className="flex flex-1 flex-col overflow-y-auto p-6 pt-4">
-                                <div className="space-y-4">
+                            {/* ── Draft Reply Tab (Epic 7) ── */}
+                            <TabsContent value="draft-reply" className="flex flex-1 flex-col overflow-y-auto p-6 pt-4">
+                                <div className="space-y-6">
                                     <div className="flex items-center justify-between">
-                                        <div>
-                                            <h3 className="text-lg font-medium">English Translation</h3>
-                                            <p className="text-xs text-muted-foreground">AI-generated translation of the original document.</p>
-                                        </div>
+                                        <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Draft Generator</p>
                                         <Button
                                             size="sm"
-                                            onClick={handleTranslate}
-                                            disabled={translateMutation.isPending}
-                                            variant="secondary"
+                                            onClick={handleGenerateDraft}
+                                            disabled={draftReplyMutation.isPending}
+                                            className="bg-indigo-600 hover:bg-indigo-700 text-white h-8 text-[10px] uppercase font-bold tracking-wider"
                                         >
-                                            {translateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageSquare className="mr-2 h-4 w-4" />}
-                                            Translate Document
+                                            {draftReplyMutation.isPending ? <Loader2 className="mr-2 h-3 w-3 animate-spin" /> : <Send className="mr-2 h-3 w-3" />}
+                                            {draftResult ? "Regenerate Draft" : "Process Notice for Draft"}
                                         </Button>
                                     </div>
+
                                     <Separator />
-                                    {translationResult ? (
-                                        <div className="rounded-md bg-muted/30 p-4 text-sm whitespace-pre-wrap leading-relaxed border border-border">
-                                            {translationResult}
+
+                                    {draftResult ? (
+                                        <div className="space-y-6">
+                                            <div className="bg-transparent border-2 border-dashed border-border p-5">
+                                                <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+                                                    <CheckCircle className="h-3 w-3" /> RECOMMENDED ACTION PLAN
+                                                </h4>
+                                                <div className="prose prose-sm dark:prose-invert max-w-none text-foreground font-medium">
+                                                    <ReactMarkdown>{draftResult.actionPlan}</ReactMarkdown>
+                                                </div>
+                                            </div>
+
+                                            <div className="bg-transparent border-2 border-dashed border-border p-5">
+                                                <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-4">
+                                                    <FileText className="h-3 w-3" /> AI GENERATED DRAFT RESPONSE
+                                                </h4>
+                                                <div className="prose prose-sm dark:prose-invert max-w-none text-foreground font-medium">
+                                                    <ReactMarkdown>{draftResult.draftLetter}</ReactMarkdown>
+                                                </div>
+                                            </div>
                                         </div>
                                     ) : (
-                                        <div className="flex h-40 flex-col items-center justify-center text-center border-2 border-dashed border-border rounded-lg">
-                                            <MessageSquare className="mb-2 h-8 w-8 text-muted-foreground/50" />
-                                            <p className="text-sm font-medium text-muted-foreground">No translation available</p>
-                                            <p className="text-xs text-muted-foreground mt-1">Click the button above to translate the source document using AI.</p>
+                                        <div className="flex h-40 flex-col items-center justify-center text-center border-2 border-dashed border-border rounded-lg bg-muted/5">
+                                            <MessageSquare className="mb-2 h-8 w-8 text-muted-foreground/30" />
+                                            <p className="text-sm font-bold text-muted-foreground/60 uppercase tracking-widest">No draft generated</p>
+                                            <p className="text-xs text-muted-foreground/50 mt-1 max-w-[200px]">Analyze the notice to generate a defense strategy & draft reply.</p>
                                         </div>
                                     )}
                                 </div>
@@ -523,9 +566,16 @@ export default function VerifyNoticePage() {
                                         <div className="space-y-4">
                                             {notice.summary && (
                                                 <div className="bg-transparent border-2 border-dashed border-border p-4">
-                                                    <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground mb-2">
-                                                        <span>✨</span> AI EXTRACTED SUMMARY
-                                                    </h4>
+                                                    <div className="flex items-center justify-between mb-2">
+                                                        <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                                                            <span>✨</span> AI EXTRACTED SUMMARY
+                                                        </h4>
+                                                        {notice.isTranslated && (
+                                                            <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
+                                                                Translated from {notice.originalLanguage ?? 'Unknown Language'}
+                                                            </Badge>
+                                                        )}
+                                                    </div>
                                                     <p className="text-sm text-foreground leading-relaxed font-medium">{notice.summary}</p>
                                                 </div>
                                             )}
@@ -586,15 +636,7 @@ export default function VerifyNoticePage() {
                                         </div>
                                     }
                                 </div>
-                                {/* Assignment */}
-                                <div className="mt-4 space-y-1.5">
-                                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Assign Operator</Label>
-                                    <AssigneeSelect
-                                        noticeId={noticeId}
-                                        currentAssignee={notice.assignedTo ?? null}
-                                        onAssigned={() => void refetch()}
-                                    />
-                                </div>
+
                                 <Separator className="my-4" />
                                 <Button
                                     variant="outline"

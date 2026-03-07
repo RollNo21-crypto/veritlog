@@ -15,7 +15,7 @@ import { NextRequest, NextResponse } from "next/server";
 export async function POST(req: NextRequest) {
     try {
         // ─── Parse webhook payload ────────────────────────────────────────
-        const body = await req.json() as Record<string, unknown>;
+        const body = await req.json() as Record<string, any>;
 
         // Support both SendGrid and Mailgun payload shapes
         const from = (body.from ?? body.sender) as string | undefined;
@@ -49,7 +49,8 @@ export async function POST(req: NextRequest) {
             const { uploadToS3, getFileViewUrl } = await import("~/server/services/storage");
             const { extractNoticeData } = await import("~/server/services/extraction");
             const { db } = await import("~/server/db");
-            const { notices: noticesTable } = await import("~/server/db/schema");
+            const { notices: noticesTable, clients, tenants } = await import("~/server/db/schema");
+            const { eq, and, or, ilike } = await import("drizzle-orm");
 
             for (const attachment of attachments) {
                 // Only process PDF / image attachments
@@ -69,10 +70,11 @@ export async function POST(req: NextRequest) {
                     }
 
                     const s3Result = await uploadToS3(fileKey, bytes.buffer, attachment.content_type);
-                    const fileUrl = getFileViewUrl(noticeId);
+                    const fileUrl = getFileViewUrl(fileKey);
 
                     // AI extraction
-                    const extraction = await extractNoticeData(fileUrl, "mock");
+                    const bodyText = (body.text ?? body.html ?? "").toString().trim().replace(/<[^>]*>?/gm, "");
+                    const extraction = await extractNoticeData(fileUrl, "parallel", bodyText);
                     const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
                     const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
@@ -88,9 +90,29 @@ export async function POST(req: NextRequest) {
                         else if (daysUntil < 14 && riskLevel !== "high") riskLevel = "medium";
                     }
 
+                    // 🔍 Try to find a matching client (Hierarchical: ID > Name)
+                    let matchedClientId: string | null = null;
+                    const extractionData = extraction.data;
+
+                    const clientConditions = [];
+                    if (extractionData.extractedGstin) clientConditions.push(eq(clients.gstin, extractionData.extractedGstin));
+                    if (extractionData.extractedPan) clientConditions.push(eq(clients.pan, extractionData.extractedPan));
+
+                    if (extractionData.extractedBusinessName) clientConditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                    if (extractionData.extractedContactName) clientConditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
+
+                    if (clientConditions.length > 0) {
+                        const matchedClients = await db.select().from(clients).where(
+                            and(eq(clients.tenantId, tenantId), or(...clientConditions))
+                        ).limit(1);
+
+                        if (matchedClients[0]) matchedClientId = matchedClients[0].id;
+                    }
+
                     await db.insert(noticesTable).values({
                         id: noticeId,
                         tenantId,
+                        clientId: matchedClientId,
                         fileName: attachment.name,
                         fileUrl,
                         fileSize: attachment.size,
@@ -104,6 +126,8 @@ export async function POST(req: NextRequest) {
                         confidence: extraction.confidence,
                         riskLevel,
                         status,
+                        isTranslated: extraction.data.isTranslated,
+                        originalLanguage: extraction.data.originalLanguage,
                         source: "email",
                         createdAt: new Date(),
                         updatedAt: new Date(),
@@ -111,8 +135,85 @@ export async function POST(req: NextRequest) {
 
                     processedNotices.push(noticeId);
                     console.log(`[Email] Processed attachment: ${attachment.name} → notice ${noticeId}`);
-                } catch (attachErr) {
-                    console.error(`[Email] Failed to process attachment ${attachment.name}:`, attachErr);
+                } catch (err) {
+                    console.error(`[Email] Failed to process attachment ${attachment.name}:`, err);
+                }
+            }
+        } else if (tenantId) {
+            // 📧 Handle Email Intimations (No Attachments)
+            const { extractNoticeData } = await import("~/server/services/extraction");
+            const { db } = await import("~/server/db");
+            const { notices: noticesTable, clients, tenants } = await import("~/server/db/schema");
+            const { eq, and, or, ilike } = await import("drizzle-orm");
+
+            const bodyText = (body.text ?? body.html ?? "").toString().trim().replace(/<[^>]*>?/gm, "");
+
+            if (bodyText.length > 50) {
+                try {
+                    console.log(`[Email/Webhook] Analyzing body for intimation from: ${from}`);
+                    const extraction = await extractNoticeData(null, "parallel", bodyText);
+
+                    if (extraction.data.isIntimation || extraction.data.extractedGstin || extraction.data.extractedPan) {
+                        const noticeId = `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+                        // 🔍 Try to find a matching client (Hierarchical: ID > Name)
+                        let matchedClientId: string | null = null;
+                        const extractionData = extraction.data;
+
+                        const conditions = [];
+                        if (extractionData.extractedGstin) conditions.push(eq(clients.gstin, extractionData.extractedGstin));
+                        if (extractionData.extractedPan) conditions.push(eq(clients.pan, extractionData.extractedPan));
+
+                        if (extractionData.extractedBusinessName) conditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                        if (extractionData.extractedContactName) conditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
+
+                        if (conditions.length > 0) {
+                            const matchedClients = await db.select().from(clients).where(
+                                and(eq(clients.tenantId, tenantId), or(...conditions))
+                            ).limit(1);
+
+                            if (matchedClients[0]) matchedClientId = matchedClients[0].id;
+                        }
+
+                        // Upsert tenant
+                        await db.insert(tenants).values({
+                            id: tenantId,
+                            name: "CA Firm",
+                            plan: "free",
+                            createdAt: new Date(),
+                        }).onConflictDoNothing({ target: tenants.id });
+
+                        const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+                        const status = "review_needed";
+
+                        await db.insert(noticesTable).values({
+                            id: noticeId,
+                            tenantId,
+                            clientId: matchedClientId,
+                            status,
+                            fileName: "Email Intimation (External)",
+                            fileUrl: "#",
+                            fileHash: "intimation",
+                            authority: extraction.data.authority ?? "Portal Notification",
+                            noticeType: extraction.data.noticeType ?? "Notice Intimation",
+                            amount: amountPaise,
+                            deadline: extraction.data.deadline,
+                            section: extraction.data.section,
+                            financialYear: extraction.data.financialYear,
+                            summary: extraction.data.summary ?? "Portal notification received via webhook.",
+                            confidence: extraction.confidence,
+                            riskLevel: "medium", // Default for intimation
+                            isTranslated: extraction.data.isTranslated,
+                            originalLanguage: extraction.data.originalLanguage,
+                            source: "email",
+                            createdAt: new Date(),
+                            updatedAt: new Date(),
+                        });
+
+                        processedNotices.push(noticeId);
+                    }
+                } catch (extErr) {
+                    console.error("[Email/Webhook] Extraction failed:", extErr);
                 }
             }
         } else {
