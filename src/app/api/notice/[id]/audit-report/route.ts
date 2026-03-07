@@ -1,9 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { createHash } from "crypto";
 import { db } from "~/server/db";
-import { notices, auditLogs, attachments } from "~/server/db/schema";
+import { notices, auditLogs, attachments, comments } from "~/server/db/schema";
 import { and, eq, isNull, desc } from "drizzle-orm";
 import { auth } from "@clerk/nextjs/server";
+import { generateDossierSummary } from "~/server/services/extraction";
 
 /**
  * Story 6.1 — Audit Report PDF Generation
@@ -20,8 +21,9 @@ import { auth } from "@clerk/nextjs/server";
  */
 export async function GET(
     _req: NextRequest,
-    { params }: { params: { id: string } }
+    { params }: { params: Promise<{ id: string }> }
 ) {
+    const resolvedParams = await params;
     const { userId, orgId } = await auth();
     if (!userId) {
         return new NextResponse("Unauthorized", { status: 401 });
@@ -35,7 +37,7 @@ export async function GET(
         .from(notices)
         .where(
             and(
-                eq(notices.id, params.id),
+                eq(notices.id, resolvedParams.id),
                 eq(notices.tenantId, tenantId),
                 isNull(notices.deletedAt)
             )
@@ -52,7 +54,7 @@ export async function GET(
         .from(auditLogs)
         .where(
             and(
-                eq(auditLogs.entityId, params.id),
+                eq(auditLogs.entityId, resolvedParams.id),
                 eq(auditLogs.tenantId, tenantId)
             )
         )
@@ -62,10 +64,19 @@ export async function GET(
     const proofDocs = await db
         .select()
         .from(attachments)
-        .where(eq(attachments.noticeId, params.id));
+        .where(eq(attachments.noticeId, resolvedParams.id));
+
+    // ── Load comments for dossier ────────────────────────────────────────────
+    const noticeComments = await db
+        .select()
+        .from(comments)
+        .where(eq(comments.noticeId, resolvedParams.id));
+
+    // ── Generate AI Dossier Summary ──────────────────────────────────────────
+    const defenseSummary = await generateDossierSummary(notice, auditEntries, noticeComments);
 
     // ── SHA-256 integrity hash ────────────────────────────────────────────────
-    const content = JSON.stringify({ notice, auditEntries, proofDocs });
+    const content = JSON.stringify({ notice, auditEntries, proofDocs, defenseSummary });
     const integrity = createHash("sha256").update(content).digest("hex");
 
     // ── Helpers ───────────────────────────────────────────────────────────────
@@ -99,7 +110,7 @@ export async function GET(
     const attachmentRows = proofDocs.map((a) => `
         <tr>
             <td>${a.fileName ?? "—"}</td>
-            <td>${a.fileType ?? "—"}</td>
+            <td>${(a.fileName?.split('.').pop() ?? "DOCUMENT").toUpperCase()}</td>
             <td style="font-family:monospace;font-size:11px">${fmt(a.createdAt)}</td>
         </tr>`).join("");
 
@@ -154,6 +165,13 @@ export async function GET(
 
 <!-- Notice Summary -->
 <h2>Notice Summary</h2>
+${defenseSummary ? `
+<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin-bottom:16px;">
+    <h3 style="font-size:11px; text-transform:uppercase; color:#166534; margin-bottom:6px; font-weight:700; letter-spacing:0.05em">
+        🛡️ AI Defensibility Summary
+    </h3>
+    <p style="font-size:13px; color:#166534; line-height:1.5">${defenseSummary}</p>
+</div>` : ""}
 <div class="grid">
   <div class="field"><label>Notice Type</label><span>${notice.noticeType ?? "—"}</span></div>
   <div class="field"><label>Issuing Authority</label><span>${notice.authority ?? "—"}</span></div>

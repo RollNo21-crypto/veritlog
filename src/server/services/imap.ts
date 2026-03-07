@@ -63,7 +63,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                 try {
                     // Fetch full raw RFC822 source — reliably handles all MIME structures
                     const msg = await client.fetchOne(String(uid), { source: true, envelope: true }, { uid: true });
-                    if (!msg?.source) {
+                    if (!msg || typeof msg === "boolean" || !msg.source) {
                         console.log(`⏭️ [IMAP] UID: ${uid} | No source found in email, skipping...`);
                         result.skipped++;
                         continue;
@@ -73,7 +73,7 @@ export async function pollEmailInbox(tenantId: string): Promise<PollResult> {
                     console.log(`\n📧 [IMAP] Processing Email: "${subject}"`);
 
                     // Parse with mailparser — handles nested/forwarded emails correctly
-                    const parsed = await simpleParser(msg.source);
+                    const parsed = await simpleParser(msg.source as Buffer);
                     const pdfAttachments = (parsed.attachments ?? []).filter(
                         (a) => a.contentType === "application/pdf" || a.filename?.toLowerCase().endsWith(".pdf")
                     );

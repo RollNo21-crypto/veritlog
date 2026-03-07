@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
-import { extractNoticeData } from "~/server/services/extraction";
-import { uploadToS3, dataUrlToBuffer, getFileViewUrl } from "~/server/services/storage";
+import { extractNoticeData, translateNoticeDocument } from "~/server/services/extraction";
+import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
 import { generateShareToken } from "~/server/services/shareToken";
 import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
@@ -78,6 +78,55 @@ export const noticeRouter = createTRPCRouter({
             const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
             const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
+            // Entity Mismatch Detection
+            let mismatchWarning: string | null = null;
+            if (input.clientId) {
+                const clientRecord = await ctx.db
+                    .select({ pan: clients.pan, gstin: clients.gstin })
+                    .from(clients)
+                    .where(eq(clients.id, input.clientId))
+                    .limit(1);
+
+                if (clientRecord[0]) {
+                    const { pan, gstin } = clientRecord[0];
+                    const { extractedPan, extractedGstin } = extraction.data;
+
+                    const warnings = [];
+                    if (pan && extractedPan && pan.trim().toUpperCase() !== extractedPan.trim().toUpperCase()) {
+                        warnings.push(`PAN mismatch (Expected: ${pan}, Found: ${extractedPan})`);
+                    }
+                    if (gstin && extractedGstin && gstin.trim().toUpperCase() !== extractedGstin.trim().toUpperCase()) {
+                        warnings.push(`GSTIN mismatch (Expected: ${gstin}, Found: ${extractedGstin})`);
+                    }
+
+                    if (warnings.length > 0) {
+                        mismatchWarning = warnings.join(" | ");
+                    }
+                }
+            }
+
+            // Ghost Notice Detector
+            let isDuplicate = false;
+            if (extraction.data.authority && amountPaise !== null && extraction.data.deadline) {
+                const existing = await ctx.db
+                    .select({ id: notices.id })
+                    .from(notices)
+                    .where(
+                        and(
+                            eq(notices.tenantId, tenantId),
+                            eq(notices.authority, extraction.data.authority),
+                            eq(notices.amount, amountPaise),
+                            eq(notices.deadline, extraction.data.deadline),
+                            isNull(notices.deletedAt)
+                        )
+                    )
+                    .limit(1);
+
+                if (existing.length > 0) {
+                    isDuplicate = true;
+                }
+            }
+
             await ctx.db.insert(notices).values({
                 id: noticeId,
                 tenantId,
@@ -98,13 +147,15 @@ export const noticeRouter = createTRPCRouter({
                 confidence: extraction.confidence,
                 riskLevel,
                 status,
+                mismatchWarning,
+                isDuplicate,
                 source: "upload",
                 createdAt: new Date(),
                 updatedAt: new Date(),
             });
 
             // 🔔 Fire WhatsApp high-risk alert (non-blocking, best-effort)
-            if (riskLevel === "high") {
+            if (riskLevel === "high" && !isDuplicate) {
                 const shareToken = generateShareToken(noticeId, tenantId);
                 void alertHighRisk({
                     noticeId,
@@ -248,17 +299,16 @@ export const noticeRouter = createTRPCRouter({
             // Recalculate risk if deadline or amount changed
             let riskLevel: string | undefined;
             if (updates.deadline !== undefined || updates.amount !== undefined) {
-                // Fetch current values to combine with updates
                 const current = await ctx.db
-                    .select({ deadline: notices.deadline, amount: notices.amount })
+                    .select()
                     .from(notices)
-                    .where(and(eq(notices.id, id), eq(notices.tenantId, tenantId)))
+                    .where(eq(notices.id, id))
                     .limit(1);
 
                 if (current[0]) {
-                    const newDeadline = updates.deadline ?? current[0].deadline;
-                    const newAmount = updates.amount !== undefined ? updates.amount : current[0].amount;
-                    riskLevel = calculateRiskLevel(newDeadline ?? null, newAmount);
+                    const amountPaise = updates.amount !== undefined ? updates.amount : current[0].amount;
+                    const deadline = updates.deadline !== undefined ? updates.deadline : current[0].deadline;
+                    riskLevel = calculateRiskLevel(deadline, amountPaise);
                 }
             }
 
@@ -272,6 +322,68 @@ export const noticeRouter = createTRPCRouter({
                 .where(and(eq(notices.id, id), eq(notices.tenantId, tenantId)));
 
             return { success: true };
+        }),
+
+    /**
+     * Translates a notice document to English using AI
+     */
+    translate: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) {
+                throw new Error("No organization or user selected");
+            }
+
+            // Get notice details
+            const notice = await ctx.db
+                .select()
+                .from(notices)
+                .where(
+                    and(
+                        eq(notices.id, input.id),
+                        eq(notices.tenantId, tenantId),
+                        isNull(notices.deletedAt)
+                    )
+                )
+                .limit(1);
+
+            if (!notice[0] || !notice[0].fileUrl) {
+                throw new Error("Notice or document not found.");
+            }
+
+            const noticeRecord = notice[0];
+            const fileUrl = noticeRecord.fileUrl!;
+            const fileName = noticeRecord.fileName ?? "document.pdf";
+
+            // The fileUrl is a proxy URL like /api/files/notice_xxx
+            // We need to fetch the actual file bytes to send to Gemini
+            let fileBase64: string;
+            let mimeType: string;
+
+            const ext = fileName.split('.').pop()?.toLowerCase();
+            mimeType = ext === 'pdf' ? 'application/pdf'
+                : ext === 'png' ? 'image/png'
+                    : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                        : 'application/pdf';
+
+            // Reconstruct the S3 key exactly as it was stored on upload
+            // Upload pattern: `${tenantId}/${noticeId}/${input.fileName}` (no encoding)
+            const s3Key = `${tenantId}/${noticeRecord.id}/${fileName}`;
+            try {
+                const presignedUrl = await getPresignedUrl(s3Key, 300);
+                const fileRes = await fetch(presignedUrl);
+                if (!fileRes.ok) throw new Error(`Failed to fetch file: ${fileRes.status}`);
+                const arrayBuffer = await fileRes.arrayBuffer();
+                fileBase64 = Buffer.from(arrayBuffer).toString("base64");
+            } catch (fetchErr) {
+                console.error("[Translate] Could not fetch file from S3:", fetchErr);
+                throw new Error("Could not access the notice document for translation.");
+            }
+
+            const dataUrl = `data:${mimeType};base64,${fileBase64}`;
+            const translation = await translateNoticeDocument(dataUrl);
+            return { translation };
         }),
 
     /**

@@ -58,6 +58,8 @@ export const notices = pgTable("notices", {
     status: text("status").notNull().default("processing"),
     // "processing" | "review_needed" | "verified" | "in_progress" | "closed" | "approval_pending" | "approved"
     hasTemplateIssue: boolean("has_template_issue").notNull().default(false),
+    isDuplicate: boolean("is_duplicate").notNull().default(false),
+    mismatchWarning: text("mismatch_warning"),
     source: text("source").notNull().default("upload"), // "upload" | "email"
     assignedTo: text("assigned_to"), // Clerk user ID
     verifiedBy: text("verified_by"), // Clerk user ID
@@ -84,6 +86,7 @@ export const comments = pgTable("comments", {
         .references(() => tenants.id),
     userId: text("user_id").notNull(), // Clerk user ID
     content: text("content").notNull(),
+    summary: text("summary"), // AI generated 1-sentence TL;DR of long content
     createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

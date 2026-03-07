@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+import { summarizeActionText } from "~/server/services/extraction";
 import { comments } from "~/server/db/schema";
 import { eq, and, desc } from "drizzle-orm";
 
@@ -41,12 +42,18 @@ export const commentRouter = createTRPCRouter({
 
             const commentId = `comment_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
+            let summary: string | null = null;
+            if (input.content.length > 150) {
+                summary = await summarizeActionText(input.content.substring(0, 3000));
+            }
+
             await ctx.db.insert(comments).values({
                 id: commentId,
                 noticeId: input.noticeId,
                 tenantId,
                 userId: ctx.session.userId,
                 content: input.content,
+                summary,
                 createdAt: new Date(),
             });
 

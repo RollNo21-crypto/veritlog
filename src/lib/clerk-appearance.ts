@@ -5,13 +5,11 @@
  * Does NOT require @clerk/themes — uses Clerk's variables API directly.
  */
 
-import type { Appearance } from "@clerk/nextjs/dist/types/types";
-
 /**
  * Full branded appearance for embedded Clerk components:
  * OrganizationProfile, CreateOrganization, SignIn, SignUp
  */
-export const clerkAppearance: Appearance = {
+export const clerkAppearance = {
     variables: {
         // Dark palette — mirrors globals.css CSS vars in dark mode
         colorBackground: "hsl(0 0% 6%)",
@@ -85,7 +83,7 @@ export const clerkAppearance: Appearance = {
  * Minimal appearance for UserButton avatar + popover
  * (sidebar bottom-left in dashboard/portal)
  */
-export const userButtonAppearance: Appearance = {
+export const userButtonAppearance = {
     variables: {
         colorBackground: "hsl(0 0% 6%)",
         colorPrimary: "hsl(0 0% 96%)",

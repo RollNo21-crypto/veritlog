@@ -237,6 +237,17 @@ export default function VerifyNoticePage() {
     });
     const [commentText, setCommentText] = useState("");
 
+    const [translationResult, setTranslationResult] = useState<string | null>(null);
+    const translateMutation = api.notice.translate.useMutation({
+        onSuccess: (data) => {
+            setTranslationResult(data.translation);
+            toast.success("Document translated to English");
+        },
+        onError: () => toast.error("Failed to translate document"),
+    });
+
+    const handleTranslate = () => translateMutation.mutate({ id: noticeId });
+
     // PDF viewer state
     const [numPages, setNumPages] = useState<number | null>(null);
     const [currentPage, setCurrentPage] = useState(1);
@@ -422,7 +433,7 @@ export default function VerifyNoticePage() {
                     {/* ── Right: Tabbed Editor ── */}
                     <ResizablePanel defaultSize={50} minSize={30} className="flex flex-col bg-card">
                         <Tabs defaultValue="fields" className="flex flex-1 flex-col overflow-hidden">
-                            <TabsList className="mx-4 mt-4 grid w-auto max-w-[500px] grid-cols-4 self-start">
+                            <TabsList className="mx-4 mt-4 grid w-auto max-w-[600px] grid-cols-5 self-start">
                                 <TabsTrigger value="fields">Fields</TabsTrigger>
                                 <TabsTrigger value="comments">
                                     Comments
@@ -438,10 +449,56 @@ export default function VerifyNoticePage() {
                                     )}
                                 </TabsTrigger>
                                 <TabsTrigger value="timeline">Timeline</TabsTrigger>
+                                <TabsTrigger value="translation" className="flex items-center gap-1.5">
+                                    <MessageSquare className="h-3 w-3" />
+                                    Translation
+                                </TabsTrigger>
                             </TabsList>
+
+                            {/* ── Translation Tab ── */}
+                            <TabsContent value="translation" className="flex flex-1 flex-col overflow-y-auto p-6 pt-4">
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <h3 className="text-lg font-medium">English Translation</h3>
+                                            <p className="text-xs text-muted-foreground">AI-generated translation of the original document.</p>
+                                        </div>
+                                        <Button
+                                            size="sm"
+                                            onClick={handleTranslate}
+                                            disabled={translateMutation.isPending}
+                                            variant="secondary"
+                                        >
+                                            {translateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <MessageSquare className="mr-2 h-4 w-4" />}
+                                            Translate Document
+                                        </Button>
+                                    </div>
+                                    <Separator />
+                                    {translationResult ? (
+                                        <div className="rounded-md bg-muted/30 p-4 text-sm whitespace-pre-wrap leading-relaxed border border-border">
+                                            {translationResult}
+                                        </div>
+                                    ) : (
+                                        <div className="flex h-40 flex-col items-center justify-center text-center border-2 border-dashed border-border rounded-lg">
+                                            <MessageSquare className="mb-2 h-8 w-8 text-muted-foreground/50" />
+                                            <p className="text-sm font-medium text-muted-foreground">No translation available</p>
+                                            <p className="text-xs text-muted-foreground mt-1">Click the button above to translate the source document using AI.</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </TabsContent>
 
                             {/* ── Fields Tab ── */}
                             <TabsContent value="fields" className="flex-1 overflow-y-auto p-6 pt-4">
+                                {notice.mismatchWarning && (
+                                    <div className="mb-4 flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive shadow-sm">
+                                        <AlertTriangle className="h-5 w-5 shrink-0 text-destructive" />
+                                        <div className="flex flex-col">
+                                            <span className="font-semibold">Entity Mismatch Detected</span>
+                                            <span className="text-xs opacity-90">{notice.mismatchWarning}</span>
+                                        </div>
+                                    </div>
+                                )}
                                 {notice.confidence === "low" && (
                                     <div className="mb-4 flex items-center gap-3 rounded-lg border border-amber-500/50 bg-amber-50 px-4 py-3 text-sm text-amber-900 shadow-sm dark:bg-amber-950/30 dark:text-amber-200">
                                         <AlertTriangle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -575,7 +632,13 @@ export default function VerifyNoticePage() {
                                                         <p className="text-xs font-medium text-muted-foreground">
                                                             {c.userId ?? "Staff"} · {formatDate(c.createdAt)}
                                                         </p>
-                                                        <p className="mt-1 text-sm text-foreground">{c.content}</p>
+                                                        {c.summary && (
+                                                            <div className="mt-2 mb-1 flex items-start gap-2 rounded border border-blue-500/20 bg-blue-500/10 p-2 text-xs text-blue-600 dark:text-blue-400">
+                                                                <MessageSquare className="mt-0.5 h-3 w-3 shrink-0" />
+                                                                <span className="font-semibold leading-relaxed">AI Summary: <span className="font-normal">{c.summary}</span></span>
+                                                            </div>
+                                                        )}
+                                                        <p className="mt-1 text-sm text-foreground whitespace-pre-wrap">{c.content}</p>
                                                     </div>
                                                     <Button
                                                         size="icon"

@@ -11,9 +11,10 @@ import { and, eq, isNull } from "drizzle-orm";
  */
 export async function GET(
     _req: NextRequest,
-    { params }: { params: { token: string } }
+    { params }: { params: Promise<{ token: string }> }
 ) {
-    const payload = verifyShareToken(params.token);
+    const resolvedParams = await params;
+    const payload = verifyShareToken(resolvedParams.token);
     if (!payload) {
         return NextResponse.json({ error: "Invalid or expired link" }, { status: 401 });
     }

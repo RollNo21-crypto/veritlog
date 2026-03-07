@@ -23,6 +23,8 @@ export interface NoticeExtraction {
     summary: string | null;
     nextSteps: string | null;
     requiredDocuments: string | null;
+    extractedPan: string | null;
+    extractedGstin: string | null;
 }
 
 export interface ExtractionResult {
@@ -47,7 +49,9 @@ Extract the following fields from the document and return ONLY valid JSON with n
   "financialYear": "Financial year e.g. 2023-24 or null",
   "summary": "One plain-English sentence summarising what this notice is about",
   "nextSteps": "Bullet points detailing the recommended next steps the CA/tax professional should take to resolve or reply to this notice",
-  "requiredDocuments": "Bullet points listing exactly what documents or evidence the CA will need to collect from the client to draft the reply"
+  "requiredDocuments": "Bullet points listing exactly what documents or evidence the CA will need to collect from the client to draft the reply",
+  "extractedPan": "The 10-character alphanumeric PAN (Permanent Account Number) of the taxpayer mentioned in the document or null",
+  "extractedGstin": "The 15-character alphanumeric GSTIN of the taxpayer mentioned in the document or null"
 }
 If a field cannot be determined, use null. Return only the JSON object, nothing else.`;
 
@@ -252,6 +256,8 @@ function extractMockData(startTime: number): ExtractionResult {
             summary: "GST Department issued a show cause notice demanding ₹2,50,000 for alleged ITC mismatch in FY 2023-24.",
             nextSteps: "• Review the notice thoroughly\n• Check the ITC ledger\n• Prepare a draft reply",
             requiredDocuments: "• GSTR-2A/2B reconciliations\n• Purchase invoices for disputed amount\n• Bank statements showing payment to suppliers",
+            extractedPan: "ABCDE1234F",
+            extractedGstin: "27ABCDE1234F1Z5",
         },
         confidence: "medium",
         provider: "mock",
@@ -276,4 +282,129 @@ function calculateConfidence(data: NoticeExtraction): "high" | "medium" | "low" 
     if (ratio >= 0.8) return "high";
     if (ratio >= 0.5) return "medium";
     return "low";
+}
+
+// ─── Document Translation (via AWS Bedrock Nova Pro) ────────────────────────────
+
+export async function translateNoticeDocument(fileUrl: string): Promise<string> {
+    try {
+        const TRANSLATE_PROMPT = `You are a professional document translator. Translate the entire content of this document into clear, accurate English. Preserve the original structure, headings, and formatting as much as possible. Provide ONLY the English translation — no commentary, no preamble.`;
+
+        const messages: Message[] = [];
+
+        if (fileUrl.startsWith("data:")) {
+            const commaIdx = fileUrl.indexOf(",");
+            const header = fileUrl.substring(5, commaIdx);
+            const mimeType = header.split(";")[0] ?? "application/pdf";
+            const base64Data = fileUrl.substring(commaIdx + 1);
+
+            const binaryStr = atob(base64Data);
+            const bytes = new Uint8Array(binaryStr.length);
+            for (let i = 0; i < binaryStr.length; i++) {
+                bytes[i] = binaryStr.charCodeAt(i)!;
+            }
+
+            if (mimeType === "application/pdf") {
+                messages.push({
+                    role: "user",
+                    content: [
+                        { document: { name: "notice", format: "pdf", source: { bytes } } },
+                        { text: TRANSLATE_PROMPT },
+                    ],
+                });
+            } else {
+                const imgFormat = mimeType.replace("image/", "") as "png" | "jpeg" | "gif" | "webp";
+                messages.push({
+                    role: "user",
+                    content: [
+                        { image: { format: imgFormat, source: { bytes } } },
+                        { text: TRANSLATE_PROMPT },
+                    ],
+                });
+            }
+        } else {
+            // Fallback: just ask Bedrock with the URL in text (for plain-text or edge cases)
+            messages.push({
+                role: "user",
+                content: [{ text: `Document URL: ${fileUrl}\n\n${TRANSLATE_PROMPT}` }],
+            });
+        }
+
+        const command = new ConverseCommand({
+            modelId: BEDROCK_MODEL_ID,
+            system: [{ text: "You are a professional multilingual document translator." }],
+            messages,
+            inferenceConfig: { temperature: 0.1, maxTokens: 4096 },
+        });
+
+        const response = await bedrock.send(command);
+        const translation = response.output?.message?.content?.[0]?.text?.trim() ?? "";
+
+        if (!translation) throw new Error("Bedrock returned empty translation.");
+        return translation;
+    } catch (e) {
+        console.error("[Translation/Bedrock] Failed to translate document:", e);
+        throw new Error("Failed to translate document. Please try again.");
+    }
+}
+
+// ─── Action Summary ──────────────────────────────────────────────────────────
+
+export async function summarizeActionText(text: string): Promise<string | null> {
+    try {
+        const response = await gemini.models.generateContent({
+            model: GEMINI_MODEL_ID,
+            contents: [{ role: "user", parts: [{ text: `You are an expert at summarizing long email threads or action logs into a single brief sentence. Provide ONLY the 1-sentence summary of the following text, with no markdown or intro text:\n\n${text}` }] }],
+            config: {
+                temperature: 0.1,
+                maxOutputTokens: 100,
+            },
+        });
+        return response.text?.trim() || null;
+    } catch (e) {
+        console.error("[Action Summary] Failed to summarize text:", e);
+        return null; // degrade gracefully
+    }
+
+}
+
+// ─── Bulletproof Dossier Summary ─────────────────────────────────────────────
+
+export async function generateDossierSummary(
+    notice: any,
+    auditLogs: any[],
+    comments: any[]
+): Promise<string | null> {
+    try {
+        const prompt = `You are an expert tax audit compliance officer.
+Please generate a "Defensibility Summary" for this tax notice, based on the following timeline of events and staff comments.
+Make it a single paragraph, professional, and focusing on whether the correct steps were taken, the evidence provided, and the final resolution readiness.
+
+Notice Details:
+Type: ${notice.noticeType}
+Status: ${notice.status}
+Amount: ${notice.amount ? notice.amount / 100 : 0}
+
+Timeline (Audit Logs):
+${auditLogs.map((log: any) => `- ${new Date(log.createdAt).toISOString().split('T')[0]}: ${log.action}`).join('\n')}
+
+Staff Comments & Notes:
+${comments.map((c: any) => `- ${c.content}`).join('\n')}
+
+Generate the concise Defense Summary:`;
+
+        const response = await gemini.models.generateContent({
+            model: GEMINI_MODEL_ID,
+            contents: [{ role: "user", parts: [{ text: prompt }] }],
+            config: {
+                temperature: 0.2,
+                maxOutputTokens: 300,
+            },
+        });
+
+        return response.text?.trim() || null;
+    } catch (e) {
+        console.error("[Dossier Summary] Failed to generate dossier summary:", e);
+        return null;
+    }
 }

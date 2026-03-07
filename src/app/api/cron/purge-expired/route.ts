@@ -53,14 +53,16 @@ export async function GET(req: NextRequest) {
         // Delete comments for this notice
         const deletedComments = await db
             .delete(comments)
-            .where(eq(comments.noticeId, noticeId));
-        purgedComments += deletedComments.rowCount ?? 0;
+            .where(eq(comments.noticeId, noticeId))
+            .returning({ id: comments.id });
+        purgedComments += deletedComments.length;
 
         // Delete attachments for this notice
         const deletedAttachments = await db
             .delete(attachments)
-            .where(eq(attachments.noticeId, noticeId));
-        purgedAttachments += deletedAttachments.rowCount ?? 0;
+            .where(eq(attachments.noticeId, noticeId))
+            .returning({ id: attachments.id });
+        purgedAttachments += deletedAttachments.length;
 
         // Delete audit logs for this notice
         const deletedLogs = await db
@@ -70,8 +72,9 @@ export async function GET(req: NextRequest) {
                     eq(auditLogs.entityId, noticeId),
                     eq(auditLogs.entityType, "notice")
                 )
-            );
-        purgedAuditLogs += deletedLogs.rowCount ?? 0;
+            )
+            .returning({ id: auditLogs.id });
+        purgedAuditLogs += deletedLogs.length;
 
         // Finally delete the notice itself
         await db

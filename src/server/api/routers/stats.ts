@@ -1,6 +1,6 @@
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { notices, auditLogs } from "~/server/db/schema";
-import { eq, and, isNull, desc } from "drizzle-orm";
+import { eq, and, isNull, desc, notInArray, sql } from "drizzle-orm";
 
 export const statsRouter = createTRPCRouter({
     /**
@@ -109,6 +109,66 @@ export const statsRouter = createTRPCRouter({
             statusBreakdown,
             riskBreakdown,
             recentEvents,
+        };
+    }),
+
+    /**
+     * Financial Exposure Radar
+     * Aggregates total money at risk from active notices
+     */
+    financialExposure: protectedProcedure.query(async ({ ctx }) => {
+        const tenantId = ctx.session.userId;
+        if (!tenantId) return null;
+
+        const activeNotices = await ctx.db
+            .select({
+                id: notices.id,
+                amount: notices.amount,
+                riskLevel: notices.riskLevel,
+                authority: notices.authority,
+                deadline: notices.deadline,
+                noticeType: notices.noticeType,
+                status: notices.status,
+            })
+            .from(notices)
+            .where(
+                and(
+                    eq(notices.tenantId, tenantId),
+                    isNull(notices.deletedAt),
+                    notInArray(notices.status, ["closed", "approved"])
+                )
+            );
+
+        let totalExposurePaise = 0;
+        let highRiskExposurePaise = 0;
+        let mediumRiskExposurePaise = 0;
+        let lowRiskExposurePaise = 0;
+        const byAuthority: Record<string, number> = {};
+
+        for (const n of activeNotices) {
+            const amount = n.amount ?? 0;
+            totalExposurePaise += amount;
+
+            if (n.riskLevel === "high") highRiskExposurePaise += amount;
+            else if (n.riskLevel === "medium") mediumRiskExposurePaise += amount;
+            else lowRiskExposurePaise += amount;
+
+            const authority = n.authority?.trim() ?? "Unknown";
+            byAuthority[authority] = (byAuthority[authority] ?? 0) + amount;
+        }
+
+        const topAuthorities = Object.entries(byAuthority)
+            .map(([name, amountPaise]) => ({ name, amountPaise, amountRupees: amountPaise / 100 }))
+            .sort((a, b) => b.amountPaise - a.amountPaise)
+            .slice(0, 5);
+
+        return {
+            totalExposureRupees: totalExposurePaise / 100,
+            highRiskRupees: highRiskExposurePaise / 100,
+            mediumRiskRupees: mediumRiskExposurePaise / 100,
+            lowRiskRupees: lowRiskExposurePaise / 100,
+            activeNoticeCount: activeNotices.length,
+            topAuthorities,
         };
     }),
 });

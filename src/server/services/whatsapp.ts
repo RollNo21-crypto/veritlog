@@ -208,3 +208,32 @@ export async function alertHighRisk(noticeData: {
         deepLinkToken: noticeData.deepLinkToken,
     });
 }
+
+/**
+ * Convenience: alert CA when a notice deadline is approaching
+ */
+export async function alertDeadlineApproaching(noticeData: {
+    noticeId: string;
+    noticeType?: string | null;
+    authority?: string | null;
+    deadline: string;
+    amount?: number | null;
+    daysLeft: number;
+    deepLinkToken?: string | null;
+}): Promise<void> {
+    const caPhone = process.env.WHATSAPP_CA_PHONE;
+    if (!caPhone) return;
+
+    const type = noticeData.daysLeft <= 1 ? "deadline_reminder_1d" : "deadline_reminder_3d";
+
+    await sendWhatsAppAlert({
+        to: caPhone,
+        type,
+        noticeId: noticeData.noticeId,
+        noticeType: noticeData.noticeType ?? undefined,
+        authority: noticeData.authority ?? undefined,
+        deadline: noticeData.deadline,
+        amount: noticeData.amount ?? undefined,
+        deepLinkToken: noticeData.deepLinkToken ?? undefined,
+    });
+}

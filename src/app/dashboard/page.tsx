@@ -11,15 +11,23 @@ import {
     CheckCircle,
     ArrowRight,
     Loader2,
+    TrendingUp,
+    ShieldAlert,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import { Skeleton } from "~/components/ui/skeleton";
+import { Separator } from "~/components/ui/separator";
 
 export default function DashboardPage() {
     const { data: stats, isLoading: statsLoading } = api.notice.stats.useQuery();
     const { data: recentNotices, isLoading: noticesLoading, refetch } = api.notice.list.useQuery();
+    const { data: exposure, isLoading: exposureLoading } = api.stats.financialExposure.useQuery();
+
+    const fmt = (n: number) => n >= 100000
+        ? `₹${(n / 100000).toFixed(1)}L`
+        : `₹${n.toLocaleString("en-IN")}`;
 
     return (
         <div className="space-y-6">
@@ -110,6 +118,68 @@ export default function DashboardPage() {
                     </Card>
                 </Link>
             </div>
+
+            {/* Financial Exposure Radar */}
+            <Card className="border-2 border-destructive/20 bg-destructive/5">
+                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-3">
+                    <div className="flex items-center gap-2">
+                        <div className="rounded-lg bg-destructive/10 p-2">
+                            <TrendingUp className="h-5 w-5 text-destructive" />
+                        </div>
+                        <div>
+                            <CardTitle className="text-base">Financial Exposure Radar</CardTitle>
+                            <CardDescription>Total money at risk across active notices</CardDescription>
+                        </div>
+                    </div>
+                    <Badge variant="destructive" className="text-xs">
+                        CFO View
+                    </Badge>
+                </CardHeader>
+                <CardContent>
+                    {exposureLoading ? (
+                        <div className="grid grid-cols-3 gap-4">
+                            {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-16" />)}
+                        </div>
+                    ) : exposure ? (
+                        <div>
+                            <div className="grid grid-cols-4 gap-4 mb-4">
+                                <div className="col-span-1 rounded-lg border border-border bg-card p-4 text-center">
+                                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Total Exposure</p>
+                                    <p className="text-2xl font-black text-foreground">{fmt(exposure.totalExposureRupees)}</p>
+                                    <p className="text-xs text-muted-foreground mt-1">{exposure.activeNoticeCount} active notices</p>
+                                </div>
+                                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-center">
+                                    <p className="text-xs text-destructive uppercase tracking-wide mb-1 font-bold">High Risk</p>
+                                    <p className="text-xl font-bold text-destructive">{fmt(exposure.highRiskRupees)}</p>
+                                </div>
+                                <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-center">
+                                    <p className="text-xs text-yellow-600 uppercase tracking-wide mb-1 font-bold">Medium Risk</p>
+                                    <p className="text-xl font-bold text-yellow-600">{fmt(exposure.mediumRiskRupees)}</p>
+                                </div>
+                                <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4 text-center">
+                                    <p className="text-xs text-green-600 uppercase tracking-wide mb-1 font-bold">Low Risk</p>
+                                    <p className="text-xl font-bold text-green-600">{fmt(exposure.lowRiskRupees)}</p>
+                                </div>
+                            </div>
+                            {exposure.topAuthorities.length > 0 && (
+                                <div>
+                                    <p className="text-xs font-bold text-muted-foreground uppercase tracking-wider mb-2">Top Authorities by Exposure</p>
+                                    <div className="space-y-1.5">
+                                        {exposure.topAuthorities.map((a, i) => (
+                                            <div key={i} className="flex items-center justify-between py-1.5 border-b border-border/50 last:border-0">
+                                                <p className="text-sm text-foreground">{a.name}</p>
+                                                <p className="text-sm font-bold text-foreground">{fmt(a.amountRupees)}</p>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    ) : (
+                        <p className="text-sm text-muted-foreground text-center py-4">No active notices to analyse.</p>
+                    )}
+                </CardContent>
+            </Card>
 
             {/* Recent Notices */}
             <Card>
