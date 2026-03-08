@@ -1,5 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { pollEmailInbox } from "~/server/services/imap";
+import { sendNewEmailAlertToCA } from "~/server/services/twilio";
 
 // Cron: Poll IMAP inbox for new notice emails
 // Schedule: every 15 minutes (vercel.json: schedule "slash-15 star star star star")
@@ -34,6 +35,12 @@ export async function GET(req: NextRequest) {
         const deadlineMs = cronStartTime + (270 * 1000);
         const result = await pollEmailInbox(tenantId, deadlineMs);
         console.log(`✨ [cron/poll-email] Poll Complete — Processed: ${result.processed} | Skipped: ${result.skipped} | Failed: ${result.failed}`);
+
+        // Trigger WhatsApp Alert to CA if new emails were successfully ingested
+        if (result.processed > 0) {
+            void sendNewEmailAlertToCA(result.processed);
+        }
+
         console.log("──────────────────────────────────────────────────");
 
         return NextResponse.json({
