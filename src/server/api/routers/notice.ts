@@ -416,7 +416,6 @@ export const noticeRouter = createTRPCRouter({
                 .then((res) => res[0]);
 
             if (!notice) throw new Error("Notice not found");
-            if (!notice.fileUrl || notice.fileUrl === "#") throw new Error("No document available to analyze");
 
             // Format data for the prompt
             const noticeData = {
@@ -424,10 +423,38 @@ export const noticeRouter = createTRPCRouter({
                 authority: notice.authority ?? "Tax Department",
                 amount: notice.amount ? `₹${(notice.amount / 100).toLocaleString("en-IN")}` : "Not specified",
                 deadline: notice.deadline ?? "Not specified",
-                gstin: notice.clientId ?? "Not available" // Fallback to clientId since gstin is in the clients table
+                gstin: notice.clientId ?? "Not available", // Fallback to clientId since gstin is in the clients table
+                summary: notice.summary ?? ""
             };
 
-            const { actionPlan, draftLetter } = await generateDraftResponse(notice.fileUrl, noticeData);
+            // Fetch the actual document from S3 so the AI can read the raw bytes
+            let documentDataUrl = "#";
+            if (notice.fileUrl && notice.fileUrl !== "#") {
+                try {
+                    const fileName = notice.fileName ?? "document.pdf";
+                    const ext = fileName.split('.').pop()?.toLowerCase();
+                    const mimeType = ext === 'pdf' ? 'application/pdf'
+                        : ext === 'png' ? 'image/png'
+                            : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                                : 'application/pdf';
+
+                    // Reconstruct S3 key
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
+                    const { getPresignedUrl } = await import("~/server/services/storage");
+                    const presignedUrl = await getPresignedUrl(s3Key, 300);
+                    const fileRes = await fetch(presignedUrl);
+                    if (fileRes.ok) {
+                        const arrayBuffer = await fileRes.arrayBuffer();
+                        const fileBase64 = Buffer.from(arrayBuffer).toString("base64");
+                        documentDataUrl = `data:${mimeType};base64,${fileBase64}`;
+                    }
+                } catch (err) {
+                    console.error("[generateDraftReply] Failed to fetch document from S3:", err);
+                    // Fallback to text-only if file fails to load
+                }
+            }
+
+            const { actionPlan, draftLetter } = await generateDraftResponse(documentDataUrl, noticeData);
             return { actionPlan, draftLetter };
         }),
 

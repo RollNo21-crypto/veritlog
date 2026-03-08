@@ -142,7 +142,7 @@ export async function pollEmailInbox(
                                 }).onConflictDoNothing({ target: tenants.id });
                                 console.log(`✅ [IMAP] Tenant record verified (Intimation): ${tenantId}`);
 
-                                const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+                                const amountPaise = extraction.data.amount ? Math.round(extraction.data.amount * 100) : null;
                                 const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
 
                                 await db.insert(notices).values({
@@ -249,7 +249,7 @@ export async function pollEmailInbox(
                                 }).onConflictDoNothing({ target: tenants.id });
                                 console.log(`✅ [IMAP] Tenant record verified (PDF): ${tenantId}`);
 
-                                const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+                                const amountPaise = extraction.data.amount ? Math.round(extraction.data.amount * 100) : null;
                                 const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
                                 const status = extraction.confidence === "low" ? "review_needed" : "processing";
 

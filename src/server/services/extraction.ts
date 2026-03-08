@@ -379,11 +379,12 @@ export async function translateNoticeDocument(fileUrl: string): Promise<string> 
 
 export async function generateDraftResponse(
     fileUrl: string,
-    noticeData: { type: string; authority: string; amount: string; deadline: string; gstin: string }
+    noticeData: { type: string; authority: string; amount: string; deadline: string; gstin: string; summary?: string }
 ): Promise<{ actionPlan: string; draftLetter: string }> {
     try {
+        const hasDocument = fileUrl && fileUrl !== "#";
         const DRAFT_PROMPT = `You are an expert Indian Tax Consultant / Chartered Accountant.
-Your task is to analyze the following tax notice document and generate a highly professional, legally sound Draft Response and an Action Plan for the client.
+Your task is to analyze the following tax notice ${hasDocument ? "document" : "details"} and generate a highly professional, legally sound Draft Response and an Action Plan for the client.
 
 Notice Context:
 - Type: ${noticeData.type}
@@ -391,7 +392,7 @@ Notice Context:
 - Demanded Amount: ${noticeData.amount}
 - Deadline: ${noticeData.deadline}
 - Client GSTIN: ${noticeData.gstin}
-
+${noticeData.summary ? `- Notice Summary: ${noticeData.summary}\n` : ""}
 Output your response STRICTLY as a valid JSON object with the following two keys. Do not wrap the JSON in markdown formatting blocks (\`\`\`json). Just return the raw JSON:
 
 {
@@ -401,7 +402,7 @@ Output your response STRICTLY as a valid JSON object with the following two keys
 
         const messages: Message[] = [];
 
-        if (fileUrl.startsWith("data:")) {
+        if (hasDocument && fileUrl.startsWith("data:")) {
             const commaIdx = fileUrl.indexOf(",");
             const header = fileUrl.substring(5, commaIdx);
             const mimeType = header.split(";")[0] ?? "application/pdf";
@@ -431,10 +432,16 @@ Output your response STRICTLY as a valid JSON object with the following two keys
                     ],
                 });
             }
-        } else {
+        } else if (hasDocument) {
             messages.push({
                 role: "user",
                 content: [{ text: `Document URL: ${fileUrl}\n\n${DRAFT_PROMPT}` }],
+            });
+        } else {
+            // Text-only mode for intimations
+            messages.push({
+                role: "user",
+                content: [{ text: DRAFT_PROMPT }],
             });
         }
 
