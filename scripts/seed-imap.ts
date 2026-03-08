@@ -63,24 +63,29 @@ async function seedEmails() {
         "Observation: Discrepancy observed in Input Tax Credit claims for FY 2023-24."
     );
 
-    // Email 3: Invoice Newsletter (Not a notice)
-    const invoicePdf = await createPdf(
-        "INVOICE #9283\n\n" +
-        "From: Cloud Web Services\n" +
-        "Total Due: $24.99\n" +
-        "Services rendered: Website hosting for February 2026.\n" +
-        "Please remit payment by EOM."
+    // Email 3: EPFO Notice (Not a tax notice, but statutory)
+    const epfoPdf = await createPdf(
+        "EMPLOYEES' PROVIDENT FUND ORGANISATION\n" +
+        "MINISTRY OF LABOUR & EMPLOYMENT, GOVT OF INDIA\n\n" +
+        "To: Acme Corp India\n" +
+        "Subject: Delay in EPF Contribution Remittance\n\n" +
+        "It is observed that the EPF contributions for the wage month of Jan 2026\n" +
+        "amounting to Rs. 45,600 have not been deposited as per Section 7A.\n" +
+        "Please remit payment immediately to avoid penal damages under 14B."
     );
 
-    // Email 4: High Risk / Short Deadline foreign language -> Maps to Alterann Ind
-    const spanishNoticePdf = await createPdf(
-        "AVISO DE AUDITORÍA FISCAL\n\n" +
+    // Email 4: High Risk / Short Deadline Income Tax Notice (Hindi/English) -> Maps to Alterann Ind
+    const itNoticePdf = await createPdf(
+        "INCOME TAX DEPARTMENT / आयकर विभाग\n" +
+        "GOVERNMENT OF INDIA\n\n" +
         "PAN Registrado: ABCDE1238F\n" +
-        "Entidad: Alterann Ind\n\n" +
-        "Seccion: 14 B de la ley de Impuesto a la Renta\n" +
-        "Monto Requerido: $250,500.00 CLP\n" +
-        "Plazo: 2 dias habiles.\n" +
-        "Su empresa ha sido seleccionada para una auditoría."
+        "Name: Alterann Ind\n\n" +
+        "Notice under Section 143(2) of the Income Tax Act, 1961\n" +
+        "Assessement Year: 2024-25\n" +
+        "Demand Amount: Rs. 1,25,500\n" +
+        "Immediate attention required. Your case has been selected for\n" +
+        "Complete Scrutiny. Please submit the requested documents within\n" +
+        "5 days of receipt of this notice."
     );
 
     // Compile Scenarios
@@ -97,24 +102,24 @@ async function seedEmails() {
             body: "Dear MarLabs,\n\nA new tax discrepancy has been flagged against your PAN AAA7687686 for FY2022-23.\nThe estimated short payment is Rs. 14,000.50.\nPlease log into the portal to review the exact demand and reply. No document is attached.",
         },
         {
-            subject: "URGENT ACTION: YOUR ACCOUNT WAS HACKED!!",
-            body: "Dear Customer,\n\nWe noticed suspicious logins. Please click this link immediately to pay a $5.00 recovery fee or your account goes goodbye forever.\n\nRegards,\nAdmin Team"
+            subject: "URGENT ACTION: INCOME TAX REFUND",
+            body: "Dear Taxpayer,\n\nYour refund of Rs. 45,000 is pending. Please click this link and verify your bank account details immediately.\n\nRegards,\nIT Dept Admin"
         },
         {
-            subject: "Your Monthly Cloud Hosting Invoice",
-            body: "Hi team, attached is the invoice for last month's computing services. Thank you!",
-            filename: "invoice_feb2026.pdf",
-            base64: invoicePdf
+            subject: "EPFO: Notice for non-payment of dues",
+            body: "Respected Employer, attached is the notice regarding delay in EPF remittance. Please do the needful.",
+            filename: "epfo_notice_jan2026.pdf",
+            base64: epfoPdf
         },
         {
-            subject: "Aviso de Auditoría Fiscal Externa",
-            body: "Adjunto encontrará el aviso oficial detallando la auditoría iniciada en su contra. Por favor responda en el plazo indicado.",
-            filename: "aviso_auditoria.pdf",
-            base64: spanishNoticePdf
+            subject: "Notice u/s 143(2) of Income Tax Act",
+            body: "Please find attached the notice under Section 143(2) for AY 2024-25. You are requested to furnish the details online.",
+            filename: "it_notice_143_2.pdf",
+            base64: itNoticePdf
         },
         {
-            subject: "Mismatch Detected - Alterann Ind vs Acme Corp India",
-            body: "Notice: The trade name registered in our systems (Acme Corp India) does not match the PAN registration records (Alterann Ind). Please update immediately.",
+            subject: "MCA Alert: Mismatch Detected - Alterann Ind vs Acme Corp India",
+            body: "Notice: The trade name registered in MCA portal (Acme Corp India) does not match the GSTIN registration records (Alterann Ind). Please update Director KYC immediately.",
         }
     ];
 
