@@ -24,7 +24,8 @@ export type PollResult = {
 
 export async function pollEmailInbox(
     tenantId: string,
-    mode: "parallel" | "mock" = "parallel"
+    mode: "parallel" | "mock" = "parallel",
+    deadlineMs?: number // optional hard cutoff timestamp (ms since epoch) to avoid Vercel timeouts
 ): Promise<PollResult> {
     const host = process.env.EMAIL_IMAP_HOST;
     const port = Number(process.env.EMAIL_IMAP_PORT ?? "993");
@@ -64,6 +65,11 @@ export async function pollEmailInbox(
             console.log(`📬 [IMAP] Found ${uids.length} unread message(s). Starting processing cycle...`);
 
             for (const uid of uids) {
+                // ⏱️ Time-budget check: stop if within 20s of deadline to ensure clean exit
+                if (deadlineMs && Date.now() > deadlineMs - 20_000) {
+                    console.warn(`⏱️ [IMAP] Time budget exhausted. Stopping after ${result.processed} processed. ${uids.length - uids.indexOf(uid)} email(s) will retry next cycle.`);
+                    break;
+                }
                 try {
                     // Fetch full raw RFC822 source — reliably handles all MIME structures
                     const msg = await client.fetchOne(String(uid), { source: true, envelope: true }, { uid: true });

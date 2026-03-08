@@ -6,7 +6,7 @@ import { pollEmailInbox } from "~/server/services/imap";
 // Manual test: GET /api/cron/poll-email?secret=YOUR_CRON_SECRET
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 300; // Vercel Pro max for cron jobs (allows ~15-20 emails per cycle)
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -25,7 +25,10 @@ export async function GET(req: NextRequest) {
         console.log("──────────────────────────────────────────────────");
         console.log("🔄 [cron/poll-email] Starting IMAP inbox poll for new notices...");
         console.log(`   tenantId=${tenantId}, imapConfigured=${imapConfigured}`);
-        const result = await pollEmailInbox(tenantId);
+        const cronStartTime = Date.now();
+        // Leave 30s buffer before maxDuration (300s) for safe exit
+        const deadlineMs = cronStartTime + (270 * 1000);
+        const result = await pollEmailInbox(tenantId, "parallel", deadlineMs);
         console.log(`✨ [cron/poll-email] Poll Complete — Processed: ${result.processed} | Skipped: ${result.skipped} | Failed: ${result.failed}`);
         console.log("──────────────────────────────────────────────────");
 
