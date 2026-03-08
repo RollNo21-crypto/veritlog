@@ -1,13 +1,5 @@
 import twilio from "twilio";
 
-const accountSid = process.env.TWILIO_ACCOUNT_SID;
-const authToken = process.env.TWILIO_AUTH_TOKEN;
-const fromPhoneNumber = process.env.TWILIO_WHATSAPP_FROM; // e.g., whatsapp:+14155238886
-const toPhoneNumber = process.env.WHATSAPP_CA_PHONE; // e.g., whatsapp:+919876543210
-
-// Initialize conditionally to not crash if env vars are missing
-const client = accountSid && authToken ? twilio(accountSid, authToken) : null;
-
 /**
  * Sends a WhatsApp alert when a High Risk notice is processed
  */
@@ -24,6 +16,14 @@ export async function sendHighRiskWhatsAppAlert({
     amount: number | null | undefined;
     deadline: string | null | undefined;
 }) {
+    const accountSid = process.env.TWILIO_ACCOUNT_SID;
+    const authToken = process.env.TWILIO_AUTH_TOKEN;
+    const fromPhoneNumber = process.env.TWILIO_WHATSAPP_FROM;
+    const toPhoneNumber = process.env.WHATSAPP_CA_PHONE;
+
+    // Initialize conditionally to not crash if env vars are missing
+    const client = accountSid && authToken ? twilio(accountSid, authToken) : null;
+
     if (!client || !fromPhoneNumber || !toPhoneNumber) {
         console.warn("[Twilio] Credentials missing. Skipping WhatsApp alert.");
         return false;
