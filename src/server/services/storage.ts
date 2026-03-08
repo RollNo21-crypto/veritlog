@@ -102,6 +102,15 @@ export async function getPresignedUrl(fileKey: string, expiresInSeconds = 3600):
 }
 
 /**
+ * Retrieve a file object directly from S3.
+ * Used for proxying the file stream directly to avoid redirect issues.
+ */
+export async function getFileObject(fileKey: string) {
+    const command = new GetObjectCommand({ Bucket: BUCKET, Key: fileKey });
+    return s3.send(command);
+}
+
+/**
  * Return the internal proxy URL for viewing a file through the Next.js API route.
  * The API route validates Clerk session before retrieving from S3.
  */

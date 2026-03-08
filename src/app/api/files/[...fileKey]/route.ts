@@ -1,10 +1,10 @@
 import type { NextRequest } from "next/server";
 import { NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
-import { getPresignedUrl } from "~/server/services/storage";
+import { getFileObject } from "~/server/services/storage";
 
 /**
- * Secure file proxy — generates a short-lived presigned S3 URL and redirects.
+ * Secure file proxy — proxies the file stream directly from S3.
  * Route: GET /api/files/[noticeId]
  * The [noticeId] segment is actually the URL-encoded S3 file key.
  */
@@ -21,13 +21,22 @@ export async function GET(
     const resolvedParams = await params;
     const keyParts = resolvedParams.fileKey;
 
-    // The param is the unencoded S3 key split by slashes: ['tenant', 'noticeId', 'filename.pdf']
     const fileKey = Array.isArray(keyParts) ? keyParts.join("/") : keyParts;
 
     try {
-        // Generate a 1-hour presigned URL and redirect — no streaming needed
-        const presignedUrl = await getPresignedUrl(fileKey, 3600);
-        return NextResponse.redirect(presignedUrl);
+        const fileObj = await getFileObject(fileKey);
+
+        if (!fileObj.Body) {
+            return new NextResponse("Not Found", { status: 404 });
+        }
+
+        return new NextResponse(fileObj.Body.transformToWebStream(), {
+            headers: {
+                "Content-Type": fileObj.ContentType ?? "application/octet-stream",
+                ...(fileObj.ContentLength ? { "Content-Length": fileObj.ContentLength.toString() } : {}),
+                "Cache-Control": "public, max-age=3600",
+            },
+        });
     } catch (error) {
         console.error("File proxy error:", error);
         return NextResponse.json({ error: "Failed to retrieve file" }, { status: 500 });
