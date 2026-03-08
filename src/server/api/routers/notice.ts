@@ -1,10 +1,9 @@
-```typescript
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { extractNoticeData, translateNoticeDocument, generateDraftResponse } from "~/server/services/extraction";
 import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl, getFileObject } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
-import { sendHighRiskWhatsAppAlert } from "~/server/services/twilio"; // Added Twilio import
+import { sendHighRiskWhatsAppAlert } from "~/server/services/twilio";
 import { generateShareToken } from "~/server/services/shareToken";
 import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
 import { eq, and, isNull, desc, asc, sql, getTableColumns, or, ilike } from "drizzle-orm";
@@ -59,8 +58,8 @@ export const noticeRouter = createTRPCRouter({
                 throw new Error("No organization or user selected");
             }
 
-            const noticeId = input.replaceNoticeId ?? `notice_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) } `;
-            const fileKey = `${ tenantId } /${noticeId}/${ input.fileName } `;
+            const noticeId = input.replaceNoticeId ?? `notice_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            const fileKey = `${tenantId}/${noticeId}/${input.fileName}`;
 
             // Upload file to S3 (private bucket, accessed via presigned URL or proxy)
             let fileUrl: string;
@@ -96,10 +95,10 @@ export const noticeRouter = createTRPCRouter({
 
                     const warnings = [];
                     if (pan && extractedPan && pan.trim().toUpperCase() !== extractedPan.trim().toUpperCase()) {
-                        warnings.push(`PAN mismatch(Expected: ${ pan }, Found: ${ extractedPan })`);
+                        warnings.push(`PAN mismatch (Expected: ${pan}, Found: ${extractedPan})`);
                     }
                     if (gstin && extractedGstin && gstin.trim().toUpperCase() !== extractedGstin.trim().toUpperCase()) {
-                        warnings.push(`GSTIN mismatch(Expected: ${ gstin }, Found: ${ extractedGstin })`);
+                        warnings.push(`GSTIN mismatch (Expected: ${gstin}, Found: ${extractedGstin})`);
                     }
 
                     if (warnings.length > 0) {
@@ -238,11 +237,11 @@ export const noticeRouter = createTRPCRouter({
                 // then sort chronologically by deadline within those tiers
                 orderByClause = [
                     sql`CASE 
-                        WHEN ${ notices.riskLevel } = 'high' THEN 1
-                        WHEN ${ notices.riskLevel } = 'medium' THEN 2
-                        WHEN ${ notices.riskLevel } = 'low' THEN 3
-                        ELSE 4
-END`,
+                        WHEN ${notices.riskLevel} = 'high' THEN 1
+                        WHEN ${notices.riskLevel} = 'medium' THEN 2
+                        WHEN ${notices.riskLevel} = 'low' THEN 3
+                        ELSE 4 
+                    END`,
                     asc(notices.deadline),
                     desc(notices.createdAt)
                 ];
@@ -383,12 +382,12 @@ END`,
                         : 'application/pdf';
 
             // Reconstruct the S3 key exactly as it was stored on upload
-            // Upload pattern: `${ tenantId } /${noticeId}/${ input.fileName } ` (no encoding)
-            const s3Key = `${ tenantId } /${noticeRecord.id}/${ fileName } `;
+            // Upload pattern: `${tenantId}/${noticeId}/${input.fileName}` (no encoding)
+            const s3Key = `${tenantId}/${noticeRecord.id}/${fileName}`;
             try {
                 const presignedUrl = await getPresignedUrl(s3Key, 300);
                 const fileRes = await fetch(presignedUrl);
-                if (!fileRes.ok) throw new Error(`Failed to fetch file: ${ fileRes.status } `);
+                if (!fileRes.ok) throw new Error(`Failed to fetch file: ${fileRes.status}`);
                 const arrayBuffer = await fileRes.arrayBuffer();
                 fileBase64 = Buffer.from(arrayBuffer).toString("base64");
             } catch (fetchErr) {
@@ -396,7 +395,7 @@ END`,
                 throw new Error("Could not access the notice document for translation.");
             }
 
-            const dataUrl = `data:${ mimeType }; base64, ${ fileBase64 } `;
+            const dataUrl = `data:${mimeType};base64,${fileBase64}`;
             const translation = await translateNoticeDocument(dataUrl);
             return { translation };
         }),
@@ -423,7 +422,7 @@ END`,
             const noticeData = {
                 type: notice.noticeType ?? "Tax Notice",
                 authority: notice.authority ?? "Tax Department",
-                amount: notice.amount ? `₹${ (notice.amount / 100).toLocaleString("en-IN") } ` : "Not specified",
+                amount: notice.amount ? `₹${(notice.amount / 100).toLocaleString("en-IN")}` : "Not specified",
                 deadline: notice.deadline ?? "Not specified",
                 gstin: notice.clientId ?? "Not available", // Fallback to clientId since gstin is in the clients table
                 summary: notice.summary ?? ""
@@ -441,14 +440,14 @@ END`,
                                 : 'application/pdf';
 
                     // Reconstruct S3 key
-                    const s3Key = `${ tenantId } /${notice.id}/${ fileName } `;
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
                     const { getPresignedUrl } = await import("~/server/services/storage");
                     const presignedUrl = await getPresignedUrl(s3Key, 300);
                     const fileRes = await fetch(presignedUrl);
                     if (fileRes.ok) {
                         const arrayBuffer = await fileRes.arrayBuffer();
                         const fileBase64 = Buffer.from(arrayBuffer).toString("base64");
-                        documentDataUrl = `data:${ mimeType }; base64, ${ fileBase64 } `;
+                        documentDataUrl = `data:${mimeType};base64,${fileBase64}`;
                     }
                 } catch (err) {
                     console.error("[generateDraftReply] Failed to fetch document from S3:", err);
@@ -489,7 +488,7 @@ END`,
             if (notice.fileName === "Email Intimation.txt") {
                 try {
                     const fileName = "Email_Body.txt";
-                    const s3Key = `${ tenantId } /${notice.id}/${ fileName } `;
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
                     const fileObj = await getFileObject(s3Key);
                     if (fileObj.Body) {
                         emailText = await fileObj.Body.transformToString();
@@ -507,12 +506,12 @@ END`,
                                 : 'application/pdf';
 
                     // Reconstruct S3 key
-                    const s3Key = `${ tenantId } /${notice.id}/${ fileName } `;
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
                     const fileObj = await getFileObject(s3Key);
                     if (fileObj.Body) {
                         const byteArray = await fileObj.Body.transformToByteArray();
                         const fileBase64 = Buffer.from(byteArray).toString("base64");
-                        documentDataUrl = `data:${ mimeType }; base64, ${ fileBase64 } `;
+                        documentDataUrl = `data:${mimeType};base64,${fileBase64}`;
                     }
                 } catch (err) {
                     console.error("[summarizeWithAI] Failed to fetch document from S3:", err);
@@ -527,7 +526,7 @@ END`,
             const status = "review_needed";
 
             // Trigger WhatsApp if High Risk
-            if (riskLevel === "High") {
+            if (riskLevel === "high") {
                 // Fire and forget, don't block the mutation response
                 void sendHighRiskWhatsAppAlert({
                     noticeId: input.id,
@@ -552,8 +551,8 @@ END`,
                 if (extractionData.extractedPan) clientConditions.push(eq(clients.pan, extractionData.extractedPan));
 
                 // Add fuzzy name matches as fallback
-                if (extractionData.extractedBusinessName) clientConditions.push(ilike(clients.businessName, `% ${ extractionData.extractedBusinessName }% `));
-                if (extractionData.extractedContactName) clientConditions.push(ilike(clients.contactName, `% ${ extractionData.extractedContactName }% `));
+                if (extractionData.extractedBusinessName) clientConditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                if (extractionData.extractedContactName) clientConditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
 
                 if (clientConditions.length > 0) {
                     const matchedClients = await ctx.db.select().from(clients).where(
@@ -590,7 +589,7 @@ END`,
                     })
                     .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-                const auditId = `audit_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) } `;
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                 await tx.insert(auditLogs).values({
                     id: auditId,
                     tenantId,
@@ -630,7 +629,7 @@ END`,
                     })
                     .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-                const auditId = `audit_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) } `;
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
                 await tx.insert(auditLogs).values({
                     id: auditId,
@@ -688,7 +687,7 @@ END`,
                     .set(updateData)
                     .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-                const auditId = `audit_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) } `;
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
                 await tx.insert(auditLogs).values({
                     id: auditId,
@@ -734,7 +733,7 @@ END`,
                     .set({ assignedTo: input.assignedTo, updatedAt: new Date() })
                     .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-                const auditId = `audit_${ Date.now() }_${ Math.random().toString(36).slice(2, 8) } `;
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
                 await tx.insert(auditLogs).values({
                     id: auditId,
                     tenantId,
@@ -782,77 +781,77 @@ END`,
             // Upload proof document to S3 if provided
             if (input.proofFileData && input.proofFileName) {
                 const { buffer, contentType } = dataUrlToBuffer(input.proofFileData);
-                const fileKey = `${ tenantId } /proof/${ input.id }/${Date.now()}_${input.proofFileName}`;
-const { fileUrl, fileHash } = await uploadToS3(fileKey, buffer, contentType);
-proofFileUrl = fileUrl;
+                const fileKey = `${tenantId}/proof/${input.id}/${Date.now()}_${input.proofFileName}`;
+                const { fileUrl, fileHash } = await uploadToS3(fileKey, buffer, contentType);
+                proofFileUrl = fileUrl;
 
-const attachmentId = `attach_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-await ctx.db.insert(attachments).values({
-    id: attachmentId,
-    noticeId: input.id,
-    tenantId,
-    userId,
-    fileName: input.proofFileName,
-    fileUrl,
-    fileSize: input.proofFileSize ?? null,
-    fileHash,
-    createdAt: new Date(),
-});
+                const attachmentId = `attach_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await ctx.db.insert(attachments).values({
+                    id: attachmentId,
+                    noticeId: input.id,
+                    tenantId,
+                    userId,
+                    fileName: input.proofFileName,
+                    fileUrl,
+                    fileSize: input.proofFileSize ?? null,
+                    fileHash,
+                    createdAt: new Date(),
+                });
             }
 
-await ctx.db.transaction(async (tx) => {
-    await tx
-        .update(notices)
-        .set({
-            status: "closed",
-            closedAt: new Date(),
-            closedBy: userId,
-            updatedAt: new Date(),
-        })
-        .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        status: "closed",
+                        closedAt: new Date(),
+                        closedBy: userId,
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-    await tx.insert(auditLogs).values({
-        id: auditId,
-        tenantId,
-        userId,
-        action: "notice.closed",
-        entityType: "notice",
-        entityId: input.id,
-        newValue: JSON.stringify({
-            reason: input.closeReason,
-            challan: input.challanNumber ?? null,
-            proofUploaded: !!proofFileUrl,
-            proofUrl: proofFileUrl,
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.closed",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({
+                        reason: input.closeReason,
+                        challan: input.challanNumber ?? null,
+                        proofUploaded: !!proofFileUrl,
+                        proofUrl: proofFileUrl,
+                    }),
+                    createdAt: new Date(),
+                });
+            });
+
+            return { success: true };
         }),
-        createdAt: new Date(),
-    });
-});
 
-return { success: true };
+    /**
+     * Soft-delete a notice (NFR12 — 7-year retention)
+     */
+    delete: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) {
+                throw new Error("No organization or user selected");
+            }
+
+            await ctx.db
+                .update(notices)
+                .set({
+                    deletedAt: new Date(),
+                    updatedAt: new Date(),
+                })
+                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+            return { success: true };
         }),
-
-/**
- * Soft-delete a notice (NFR12 — 7-year retention)
- */
-delete: protectedProcedure
-    .input(z.object({ id: z.string() }))
-    .mutation(async ({ ctx, input }) => {
-        const tenantId = ctx.session.userId;
-        if (!tenantId) {
-            throw new Error("No organization or user selected");
-        }
-
-        await ctx.db
-            .update(notices)
-            .set({
-                deletedAt: new Date(),
-                updatedAt: new Date(),
-            })
-            .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
-
-        return { success: true };
-    }),
 
     /**
      * Dashboard stats for current tenant
@@ -884,151 +883,151 @@ delete: protectedProcedure
 
 
 
-        /**
-         * Flag a template issue for dev team review
-         */
-        flagTemplateIssue: protectedProcedure
-            .input(z.object({ id: z.string() }))
-            .mutation(async ({ ctx, input }) => {
-                const tenantId = ctx.session.userId;
-                const userId = ctx.session.userId;
+    /**
+     * Flag a template issue for dev team review
+     */
+    flagTemplateIssue: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
 
-                if (!tenantId) {
-                    throw new Error("No organization or user selected");
-                }
+            if (!tenantId) {
+                throw new Error("No organization or user selected");
+            }
 
-                await ctx.db.transaction(async (tx) => {
-                    await tx
-                        .update(notices)
-                        .set({
-                            hasTemplateIssue: true,
-                            updatedAt: new Date(),
-                        })
-                        .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        hasTemplateIssue: true,
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
 
-                    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 
-                    await tx.insert(auditLogs).values({
-                        id: auditId,
-                        tenantId,
-                        userId,
-                        action: "notice.template_issue_flagged",
-                        entityType: "notice",
-                        entityId: input.id,
-                        newValue: JSON.stringify({ hasTemplateIssue: true }),
-                        createdAt: new Date(),
-                    });
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.template_issue_flagged",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ hasTemplateIssue: true }),
+                    createdAt: new Date(),
+                });
+            });
+
+            // Mock Dev Team Alert
+            console.warn(`[DEV ALERT] Template Issue flagged by user ${userId} for Notice ${input.id}`);
+
+            return { success: true };
+        }),
+
+    /**
+     * Client approves a drafted response (FR18 — Story 4.4)
+     */
+    approveResponse: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({ status: "approved", updatedAt: new Date() })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.approved",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ status: "approved", approvedBy: userId }),
+                    createdAt: new Date(),
+                });
+            });
+
+            return { success: true };
+        }),
+
+    /**
+     * Get all response attachments for a notice
+     */
+    getAttachments: protectedProcedure
+        .input(z.object({ noticeId: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) return [];
+
+            return ctx.db
+                .select()
+                .from(attachments)
+                .where(
+                    and(
+                        eq(attachments.noticeId, input.noticeId),
+                        eq(attachments.tenantId, tenantId)
+                    )
+                )
+                .orderBy(desc(attachments.createdAt));
+        }),
+
+    /**
+     * Link an uploaded response document to a notice (Immutable Ledger)
+     */
+    addAttachment: protectedProcedure
+        .input(
+            z.object({
+                noticeId: z.string(),
+                fileName: z.string(),
+                fileUrl: z.string(),
+                fileSize: z.number().optional(),
+                fileHash: z.string().optional(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            const attachmentId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+
+            await ctx.db.transaction(async (tx) => {
+                await tx.insert(attachments).values({
+                    id: attachmentId,
+                    noticeId: input.noticeId,
+                    tenantId,
+                    userId,
+                    fileName: input.fileName,
+                    fileUrl: input.fileUrl,
+                    fileSize: input.fileSize ?? null,
+                    fileHash: input.fileHash ?? null,
+                    createdAt: new Date(),
                 });
 
-                // Mock Dev Team Alert
-                console.warn(`[DEV ALERT] Template Issue flagged by user ${userId} for Notice ${input.id}`);
-
-                return { success: true };
-            }),
-
-            /**
-             * Client approves a drafted response (FR18 — Story 4.4)
-             */
-            approveResponse: protectedProcedure
-                .input(z.object({ id: z.string() }))
-                .mutation(async ({ ctx, input }) => {
-                    const tenantId = ctx.session.userId;
-                    const userId = ctx.session.userId;
-                    if (!tenantId) throw new Error("No organization or user selected");
-
-                    await ctx.db.transaction(async (tx) => {
-                        await tx
-                            .update(notices)
-                            .set({ status: "approved", updatedAt: new Date() })
-                            .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
-
-                        const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                        await tx.insert(auditLogs).values({
-                            id: auditId,
-                            tenantId,
-                            userId,
-                            action: "notice.approved",
-                            entityType: "notice",
-                            entityId: input.id,
-                            newValue: JSON.stringify({ status: "approved", approvedBy: userId }),
-                            createdAt: new Date(),
-                        });
-                    });
-
-                    return { success: true };
-                }),
-
-                /**
-                 * Get all response attachments for a notice
-                 */
-                getAttachments: protectedProcedure
-                    .input(z.object({ noticeId: z.string() }))
-                    .query(async ({ ctx, input }) => {
-                        const tenantId = ctx.session.userId;
-                        if (!tenantId) return [];
-
-                        return ctx.db
-                            .select()
-                            .from(attachments)
-                            .where(
-                                and(
-                                    eq(attachments.noticeId, input.noticeId),
-                                    eq(attachments.tenantId, tenantId)
-                                )
-                            )
-                            .orderBy(desc(attachments.createdAt));
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "attachment.added",
+                    entityType: "notice",
+                    entityId: input.noticeId,
+                    newValue: JSON.stringify({
+                        attachmentId,
+                        fileName: input.fileName,
+                        fileUrl: input.fileUrl
                     }),
+                    createdAt: new Date(),
+                });
+            });
 
-                    /**
-                     * Link an uploaded response document to a notice (Immutable Ledger)
-                     */
-                    addAttachment: protectedProcedure
-                        .input(
-                            z.object({
-                                noticeId: z.string(),
-                                fileName: z.string(),
-                                fileUrl: z.string(),
-                                fileSize: z.number().optional(),
-                                fileHash: z.string().optional(),
-                            })
-                        )
-                        .mutation(async ({ ctx, input }) => {
-                            const tenantId = ctx.session.userId;
-                            const userId = ctx.session.userId;
-                            if (!tenantId) throw new Error("No organization or user selected");
-
-                            const attachmentId = `doc_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-
-                            await ctx.db.transaction(async (tx) => {
-                                await tx.insert(attachments).values({
-                                    id: attachmentId,
-                                    noticeId: input.noticeId,
-                                    tenantId,
-                                    userId,
-                                    fileName: input.fileName,
-                                    fileUrl: input.fileUrl,
-                                    fileSize: input.fileSize ?? null,
-                                    fileHash: input.fileHash ?? null,
-                                    createdAt: new Date(),
-                                });
-
-                                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
-                                await tx.insert(auditLogs).values({
-                                    id: auditId,
-                                    tenantId,
-                                    userId,
-                                    action: "attachment.added",
-                                    entityType: "notice",
-                                    entityId: input.noticeId,
-                                    newValue: JSON.stringify({
-                                        attachmentId,
-                                        fileName: input.fileName,
-                                        fileUrl: input.fileUrl
-                                    }),
-                                    createdAt: new Date(),
-                                });
-                            });
-
-                            return { success: true, attachmentId };
-                        }),
+            return { success: true, attachmentId };
+        }),
 });
