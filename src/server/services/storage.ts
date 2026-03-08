@@ -20,20 +20,32 @@ export interface S3UploadResult {
  * Singleton S3 client — configured from env vars at module load time.
  */
 const AWS_REGION = process.env.AWS_REGION ?? "ap-south-1";
+const S3_CREDENTIALS = {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
+};
 
 /**
- * Singleton S3 client — configured from env vars at module load time.
- * NOTE: Do NOT set a custom endpoint — it blocks AWS SDK region redirect resolution.
- * followRegionRedirects handles PermanentRedirect errors if the bucket is in a different region.
+ * Upload client — uses followRegionRedirects so the SDK can resolve
+ * the correct regional endpoint even if AWS_REGION env var is missing.
  */
 const s3 = new S3Client({
     region: AWS_REGION,
     forcePathStyle: false,
     followRegionRedirects: true,
-    credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
-    },
+    credentials: S3_CREDENTIALS,
+});
+
+/**
+ * Presigning client — must use an EXPLICIT regional endpoint.
+ * Presigned URLs are fetched by browsers directly; they cannot follow
+ * HTTP 301 redirects because the signature is tied to the original URL.
+ */
+const s3Presign = new S3Client({
+    region: AWS_REGION,
+    endpoint: `https://s3.${AWS_REGION}.amazonaws.com`,
+    forcePathStyle: false,
+    credentials: S3_CREDENTIALS,
 });
 
 const BUCKET = process.env.S3_BUCKET_NAME!;
@@ -86,7 +98,7 @@ export async function deleteFromS3(fileKey: string): Promise<void> {
  */
 export async function getPresignedUrl(fileKey: string, expiresInSeconds = 3600): Promise<string> {
     const command = new GetObjectCommand({ Bucket: BUCKET, Key: fileKey });
-    return getSignedUrl(s3, command, { expiresIn: expiresInSeconds });
+    return getSignedUrl(s3Presign, command, { expiresIn: expiresInSeconds });
 }
 
 /**
