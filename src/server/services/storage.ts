@@ -23,12 +23,11 @@ const AWS_REGION = process.env.AWS_REGION ?? "ap-south-1";
 
 /**
  * Singleton S3 client — configured from env vars at module load time.
- * NOTE: forcePathStyle must be false for AWS S3 (virtual-hosted-style).
- * followRegionRedirects handles PermanentRedirect errors when AWS_REGION env var is missing.
+ * NOTE: Do NOT set a custom endpoint — it blocks AWS SDK region redirect resolution.
+ * followRegionRedirects handles PermanentRedirect errors if the bucket is in a different region.
  */
 const s3 = new S3Client({
     region: AWS_REGION,
-    endpoint: `https://s3.${AWS_REGION}.amazonaws.com`,
     forcePathStyle: false,
     followRegionRedirects: true,
     credentials: {
