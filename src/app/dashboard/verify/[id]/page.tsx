@@ -210,6 +210,15 @@ export default function VerifyNoticePage() {
         },
         onError: () => toast.error("Failed to verify notice"),
     });
+
+    const summarizeMutation = api.notice.summarizeWithAI.useMutation({
+        onSuccess: () => {
+            toast.success("AI Summarization complete");
+            void refetch();
+        },
+        onError: (err) => toast.error("AI Summarization failed: " + err.message),
+    });
+
     const createCommentMutation = api.comment.create.useMutation({
         onSuccess: () => {
             setCommentText("");
@@ -350,6 +359,18 @@ export default function VerifyNoticePage() {
                     )}
                 </div>
                 <div className="flex items-center gap-2">
+                    {notice.authority === "Pending Extraction" && (
+                        <Button
+                            variant="default"
+                            size="sm"
+                            onClick={() => summarizeMutation.mutate({ id: noticeId })}
+                            disabled={summarizeMutation.isPending}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white shadow-md animate-in fade-in"
+                        >
+                            {summarizeMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Send className="mr-2 h-4 w-4" />}
+                            {summarizeMutation.isPending ? "Summarizing..." : "Summarize with AI"}
+                        </Button>
+                    )}
 
                     {/* Download Audit Report — Story 6.1 */}
                     {["verified", "closed", "approved"].includes(notice.status) && (
@@ -362,14 +383,14 @@ export default function VerifyNoticePage() {
                             Audit Report
                         </Button>
                     )}
-                    <Button variant="outline" size="sm" onClick={handleSave} disabled={updateMutation.isPending}>
+                    <Button variant="outline" size="sm" onClick={handleSave} disabled={updateMutation.isPending || summarizeMutation.isPending}>
                         {updateMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
                         Save
                     </Button>
                     <Button
                         size="sm"
                         onClick={handleVerify}
-                        disabled={verifyMutation.isPending || notice.status === "verified"}
+                        disabled={verifyMutation.isPending || notice.status === "verified" || summarizeMutation.isPending || notice.authority === "Pending Extraction"}
                         className="bg-green-600 hover:bg-green-700"
                     >
                         {verifyMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <CheckCircle className="mr-2 h-4 w-4" />}

@@ -459,6 +459,139 @@ export const noticeRouter = createTRPCRouter({
         }),
 
     /**
+     * Summarize a pending notice using AI
+     */
+    summarizeWithAI: protectedProcedure
+        .input(z.object({ id: z.string() }))
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            const userId = ctx.session.userId;
+
+            if (!tenantId) {
+                throw new Error("No organization or user selected");
+            }
+
+            const notice = await ctx.db
+                .select()
+                .from(notices)
+                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)))
+                .limit(1)
+                .then((res) => res[0]);
+
+            if (!notice) throw new Error("Notice not found");
+
+            // Fetch the document or text
+            let documentDataUrl = "#";
+            let emailText: string | undefined = undefined;
+
+            if (notice.fileName === "Email Intimation.txt") {
+                try {
+                    const fileName = "Email_Body.txt";
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
+                    const { getPresignedUrl } = await import("~/server/services/storage");
+                    const presignedUrl = await getPresignedUrl(s3Key, 300);
+                    const fileRes = await fetch(presignedUrl);
+                    if (fileRes.ok) {
+                        emailText = await fileRes.text();
+                    }
+                } catch (e) {
+                    console.error("Failed to fetch email intimation body", e);
+                }
+            } else if (notice.fileUrl && notice.fileUrl !== "#") {
+                try {
+                    const fileName = notice.fileName ?? "document.pdf";
+                    const ext = fileName.split('.').pop()?.toLowerCase();
+                    const mimeType = ext === 'pdf' ? 'application/pdf'
+                        : ext === 'png' ? 'image/png'
+                            : ext === 'jpg' || ext === 'jpeg' ? 'image/jpeg'
+                                : 'application/pdf';
+
+                    // Reconstruct S3 key
+                    const s3Key = `${tenantId}/${notice.id}/${fileName}`;
+                    const { getPresignedUrl } = await import("~/server/services/storage");
+                    const presignedUrl = await getPresignedUrl(s3Key, 300);
+                    const fileRes = await fetch(presignedUrl);
+                    if (fileRes.ok) {
+                        const arrayBuffer = await fileRes.arrayBuffer();
+                        const fileBase64 = Buffer.from(arrayBuffer).toString("base64");
+                        documentDataUrl = `data:${mimeType};base64,${fileBase64}`;
+                    }
+                } catch (err) {
+                    console.error("[summarizeWithAI] Failed to fetch document from S3:", err);
+                }
+            }
+
+            // Run AI extraction
+            const extraction = await extractNoticeData(documentDataUrl === "#" ? null : documentDataUrl, "parallel", emailText);
+            const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
+            const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
+            const status = extraction.confidence === "low" ? "review_needed" : "review_needed"; // Require review after summarization
+
+            // Try to find client if we now have a PAN or GSTIN
+            let matchedClientId = notice.clientId;
+            if (!matchedClientId && (extraction.data.extractedGstin || extraction.data.extractedPan)) {
+                const extractionData = extraction.data;
+                const clientConditions = [];
+                const { ilike, or } = await import("drizzle-orm");
+                if (extractionData.extractedGstin) clientConditions.push(eq(clients.gstin, extractionData.extractedGstin));
+                if (extractionData.extractedPan) clientConditions.push(eq(clients.pan, extractionData.extractedPan));
+
+                // Add fuzzy name matches as fallback
+                if (extractionData.extractedBusinessName) clientConditions.push(ilike(clients.businessName, `%${extractionData.extractedBusinessName}%`));
+                if (extractionData.extractedContactName) clientConditions.push(ilike(clients.contactName, `%${extractionData.extractedContactName}%`));
+
+                if (clientConditions.length > 0) {
+                    const matchedClients = await ctx.db.select().from(clients).where(
+                        and(eq(clients.tenantId, tenantId), or(...clientConditions))
+                    ).limit(1);
+
+                    if (matchedClients[0]) {
+                        matchedClientId = matchedClients[0].id;
+                    }
+                }
+            }
+
+            // Update database
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        authority: extraction.data.authority,
+                        noticeType: extraction.data.noticeType,
+                        amount: amountPaise,
+                        deadline: extraction.data.deadline,
+                        section: extraction.data.section,
+                        financialYear: extraction.data.financialYear,
+                        summary: extraction.data.summary,
+                        nextSteps: extraction.data.nextSteps,
+                        requiredDocuments: extraction.data.requiredDocuments,
+                        confidence: extraction.confidence,
+                        riskLevel,
+                        status: status,
+                        isTranslated: extraction.data.isTranslated,
+                        originalLanguage: extraction.data.originalLanguage,
+                        clientId: matchedClientId,
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.updated",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({ action: "AI Summarization completed" }),
+                    createdAt: new Date(),
+                });
+            });
+
+            return { success: true };
+        }),
+
+    /**
      * Mark notice as verified
      */
     verify: protectedProcedure
