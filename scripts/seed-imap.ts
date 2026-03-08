@@ -76,7 +76,7 @@ async function seedEmails() {
 
     // Email 4: High Risk / Short Deadline Income Tax Notice (Hindi/English) -> Maps to Alterann Ind
     const itNoticePdf = await createPdf(
-        "INCOME TAX DEPARTMENT / आयकर विभाग\n" +
+        "INCOME TAX DEPARTMENT\n" +
         "GOVERNMENT OF INDIA\n\n" +
         "PAN Registrado: ABCDE1238F\n" +
         "Name: Alterann Ind\n\n" +
