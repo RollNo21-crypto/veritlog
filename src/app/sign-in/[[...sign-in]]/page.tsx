@@ -22,7 +22,7 @@ export default function SignInPage() {
                 <div className="space-y-6">
                     <h1 className="text-5xl font-black uppercase tracking-tight text-white leading-none">
                         Zero-entry<br />
-                        <span className="text-[hsl(190_255_0/1)] text-[#BEFF00]">notice</span><br />
+                        <span className="text-[#BEFF00]">notice</span><br />
                         digitisation
                     </h1>
                     <p className="text-[hsl(0_0%_55%)] text-lg leading-relaxed max-w-sm">
