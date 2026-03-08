@@ -170,8 +170,10 @@ export async function pollEmailInbox(
                             // ✅ Mark as Seen only after successful DB insertion
                             try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                         } catch (err) {
-                            console.error(`❌ [IMAP] Error analyzing body: ${err}`);
+                            const errMsg = err instanceof Error ? err.message : String(err);
+                            console.error(`❌ [IMAP] Error analyzing body: ${errMsg}`);
                             result.failed++;
+                            result.lastError = errMsg;
                             // DO NOT mark as Seen — allow retry on next poll cycle
                         }
                     } else {
@@ -244,8 +246,10 @@ export async function pollEmailInbox(
                                 result.processed++;
                                 console.log(`✅  [IMAP] PDF notice created: ${noticeId}`);
                             } catch (pdfErr) {
-                                console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, pdfErr);
+                                const errMsg = pdfErr instanceof Error ? pdfErr.message : String(pdfErr);
+                                console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, errMsg);
                                 result.failed++;
+                                result.lastError = errMsg;
                                 emailFailed = true;
                                 // DO NOT mark as Seen if this PDF failed — allow retry on next poll cycle
                             }
