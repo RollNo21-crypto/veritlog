@@ -5,7 +5,7 @@ import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl } from "~/
 import { alertHighRisk } from "~/server/services/whatsapp";
 import { generateShareToken } from "~/server/services/shareToken";
 import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
-import { eq, and, isNull, desc, asc, sql, getTableColumns } from "drizzle-orm";
+import { eq, and, isNull, desc, asc, sql, getTableColumns, or, ilike } from "drizzle-orm";
 
 /**
  * Calculate risk level based on deadline proximity and amount.
@@ -488,7 +488,6 @@ export const noticeRouter = createTRPCRouter({
                 try {
                     const fileName = "Email_Body.txt";
                     const s3Key = `${tenantId}/${notice.id}/${fileName}`;
-                    const { getPresignedUrl } = await import("~/server/services/storage");
                     const presignedUrl = await getPresignedUrl(s3Key, 300);
                     const fileRes = await fetch(presignedUrl);
                     if (fileRes.ok) {
@@ -508,7 +507,6 @@ export const noticeRouter = createTRPCRouter({
 
                     // Reconstruct S3 key
                     const s3Key = `${tenantId}/${notice.id}/${fileName}`;
-                    const { getPresignedUrl } = await import("~/server/services/storage");
                     const presignedUrl = await getPresignedUrl(s3Key, 300);
                     const fileRes = await fetch(presignedUrl);
                     if (fileRes.ok) {
@@ -525,14 +523,14 @@ export const noticeRouter = createTRPCRouter({
             const extraction = await extractNoticeData(documentDataUrl === "#" ? null : documentDataUrl, "parallel", emailText);
             const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
             const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
-            const status = extraction.confidence === "low" ? "review_needed" : "review_needed"; // Require review after summarization
+            // Always require human review after AI summarization
+            const status = "review_needed";
 
             // Try to find client if we now have a PAN or GSTIN
             let matchedClientId = notice.clientId;
             if (!matchedClientId && (extraction.data.extractedGstin || extraction.data.extractedPan)) {
                 const extractionData = extraction.data;
                 const clientConditions = [];
-                const { ilike, or } = await import("drizzle-orm");
                 if (extractionData.extractedGstin) clientConditions.push(eq(clients.gstin, extractionData.extractedGstin));
                 if (extractionData.extractedPan) clientConditions.push(eq(clients.pan, extractionData.extractedPan));
 

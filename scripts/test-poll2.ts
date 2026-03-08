@@ -5,7 +5,7 @@ async function main() {
     console.log("Starting IMAP poll for the 6 seeded emails...");
     try {
         const tenantId = process.env.EMAIL_TENANT_ID ?? "system";
-        const result = await pollEmailInbox(tenantId, "parallel");
+        const result = await pollEmailInbox(tenantId);
         console.log("✅ Poll Complete:", result);
     } catch (e) {
         console.error("❌ Error polling:", e);

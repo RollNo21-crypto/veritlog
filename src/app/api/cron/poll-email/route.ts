@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
         const cronStartTime = Date.now();
         // Leave 30s buffer before maxDuration (300s) for safe exit
         const deadlineMs = cronStartTime + (270 * 1000);
-        const result = await pollEmailInbox(tenantId, "parallel", deadlineMs);
+        const result = await pollEmailInbox(tenantId, deadlineMs);
         console.log(`✨ [cron/poll-email] Poll Complete — Processed: ${result.processed} | Skipped: ${result.skipped} | Failed: ${result.failed}`);
         console.log("──────────────────────────────────────────────────");
 

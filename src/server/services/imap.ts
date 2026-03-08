@@ -9,11 +9,10 @@
 
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
-import { extractNoticeData } from "~/server/services/extraction";
 import { uploadToS3 } from "~/server/services/storage";
 import { db } from "~/server/db";
-import { notices, auditLogs, tenants, clients } from "~/server/db/schema";
-import { eq, and, or, ilike } from "drizzle-orm";
+import { notices, auditLogs, tenants } from "~/server/db/schema";
+import { eq } from "drizzle-orm";
 
 export type PollResult = {
     processed: number;
@@ -24,7 +23,6 @@ export type PollResult = {
 
 export async function pollEmailInbox(
     tenantId: string,
-    mode: "parallel" | "mock" = "parallel",
     deadlineMs?: number // optional hard cutoff timestamp (ms since epoch) to avoid Vercel timeouts
 ): Promise<PollResult> {
     const host = process.env.EMAIL_IMAP_HOST;
@@ -132,7 +130,7 @@ export async function pollEmailInbox(
                                 id: noticeId,
                                 tenantId,
                                 clientId: null,
-                                status: "processing",
+                                status: "review_needed",
                                 fileName: "Email Intimation.txt",
                                 fileUrl: s3Result.fileUrl,
                                 fileHash: s3Result.fileHash, // This will ensure we have the uploaded file hash
@@ -178,6 +176,7 @@ export async function pollEmailInbox(
                         }
                     } else {
                         // 📎 Handle PDF / Image Attachments (Existing Logic)
+                        let emailFailed = false;
                         for (const attachment of noticeAttachments) {
                             const filename = attachment.filename ?? `notice_${Date.now()}`;
                             const buffer = attachment.content;
@@ -209,7 +208,7 @@ export async function pollEmailInbox(
                                     id: noticeId,
                                     tenantId,
                                     clientId: null,
-                                    status: "processing",
+                                    status: "review_needed",
                                     fileName: filename,
                                     fileUrl: s3Result.fileUrl,
                                     fileHash: s3Result.fileHash,
@@ -247,12 +246,13 @@ export async function pollEmailInbox(
                             } catch (pdfErr) {
                                 console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, pdfErr);
                                 result.failed++;
+                                emailFailed = true;
                                 // DO NOT mark as Seen if this PDF failed — allow retry on next poll cycle
                             }
                         }
 
-                        // Mark as Seen only if no failures occurred during attachment processing
-                        if (result.failed === 0) {
+                        // Mark as Seen only if this email had no failures
+                        if (!emailFailed) {
                             try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                         }
                     } // end else (PDF/Image branch)
@@ -271,13 +271,4 @@ export async function pollEmailInbox(
     }
 
     return result;
-}
-
-function calcRisk(deadline?: string | null, amountPaise?: number | null): "high" | "medium" | "low" {
-    const days = deadline
-        ? Math.ceil((new Date(deadline).getTime() - Date.now()) / 86_400_000)
-        : null;
-    if ((days !== null && days < 7) || (amountPaise !== null && amountPaise !== undefined && amountPaise > 100_000_00)) return "high";
-    if ((days !== null && days < 14) || (amountPaise !== null && amountPaise !== undefined && amountPaise > 10_000_00)) return "medium";
-    return "low";
 }
