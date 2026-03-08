@@ -524,9 +524,14 @@ export const noticeRouter = createTRPCRouter({
             // Always require human review after AI summarization
             const status = "review_needed";
 
-            // Try to find client if we now have a PAN or GSTIN
+            // Try to find client if we now have a PAN, GSTIN, or Name
             let matchedClientId = notice.clientId;
-            if (!matchedClientId && (extraction.data.extractedGstin || extraction.data.extractedPan)) {
+            if (!matchedClientId && (
+                extraction.data.extractedGstin ||
+                extraction.data.extractedPan ||
+                extraction.data.extractedBusinessName ||
+                extraction.data.extractedContactName
+            )) {
                 const extractionData = extraction.data;
                 const clientConditions = [];
                 if (extractionData.extractedGstin) clientConditions.push(eq(clients.gstin, extractionData.extractedGstin));
