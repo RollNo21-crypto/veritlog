@@ -19,11 +19,18 @@ export interface S3UploadResult {
 /**
  * Singleton S3 client — configured from env vars at module load time.
  */
+const AWS_REGION = process.env.AWS_REGION ?? "ap-south-1";
+
+/**
+ * Singleton S3 client — configured from env vars at module load time.
+ * NOTE: forcePathStyle must be false for AWS S3 (virtual-hosted-style).
+ * followRegionRedirects handles PermanentRedirect errors when AWS_REGION env var is missing.
+ */
 const s3 = new S3Client({
-    region: process.env.AWS_REGION ?? "ap-south-1",
-    // Explicit regional endpoint prevents PermanentRedirect errors for non-us-east-1 buckets
-    endpoint: `https://s3.${process.env.AWS_REGION ?? "ap-south-1"}.amazonaws.com`,
-    forcePathStyle: false, // Virtual-hosted-style URLs (default for AWS S3)
+    region: AWS_REGION,
+    endpoint: `https://s3.${AWS_REGION}.amazonaws.com`,
+    forcePathStyle: false,
+    followRegionRedirects: true,
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
