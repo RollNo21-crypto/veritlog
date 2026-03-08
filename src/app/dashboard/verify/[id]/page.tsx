@@ -585,11 +585,12 @@ export default function VerifyNoticePage() {
                                     <>
                                         <Separator className="my-4" />
                                         <div className="space-y-4">
-                                            {notice.summary && (
-                                                <div className="bg-transparent border-2 border-dashed border-border p-4">
+                                            {(notice.summary || summarizeMutation.isPending) && (
+                                                <div className="bg-transparent border-2 border-dashed border-border p-4 rounded-lg">
                                                     <div className="flex items-center justify-between mb-2">
                                                         <h4 className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                                                            <span>✨</span> AI EXTRACTED SUMMARY
+                                                            {summarizeMutation.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <span>✨</span>}
+                                                            AI EXTRACTED SUMMARY
                                                         </h4>
                                                         {notice.isTranslated && (
                                                             <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">
@@ -597,7 +598,19 @@ export default function VerifyNoticePage() {
                                                             </Badge>
                                                         )}
                                                     </div>
-                                                    <p className="text-sm text-foreground leading-relaxed font-medium">{notice.summary}</p>
+
+                                                    {summarizeMutation.isPending ? (
+                                                        <div className="space-y-2 mt-3 text-muted-foreground text-sm flex items-center gap-2">
+                                                            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                                                            <span>Extracting summary and fields securely...</span>
+                                                        </div>
+                                                    ) : notice.summary?.includes("Pending AI summarization") ? (
+                                                        <p className="text-sm text-muted-foreground italic leading-relaxed">
+                                                            Please click <strong>Summarize with AI</strong> above to extract data from this document.
+                                                        </p>
+                                                    ) : (
+                                                        <p className="text-sm text-foreground leading-relaxed font-medium">{notice.summary}</p>
+                                                    )}
                                                 </div>
                                             )}
 
