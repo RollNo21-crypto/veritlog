@@ -43,29 +43,36 @@ export interface ExtractionResult {
 const BEDROCK_MODEL_ID = "us.amazon.nova-pro-v1:0";
 const GEMINI_MODEL_ID = "gemini-2.0-flash";
 
-const SYSTEM_INSTRUCTION = `You are an expert at reading Indian tax and regulatory notices (GST, Income Tax, Customs, etc.).
-Extract the following fields from the document and return ONLY valid JSON with no markdown or code fences:
+const SYSTEM_INSTRUCTION = `You are an expert Chartered Accountant specializing in Indian tax litigation and regulatory notices (GST, Income Tax, Customs, SEBI, etc.).
+Extract the following fields from the document and return ONLY valid JSON with no markdown or code fences.
+
+CRITICAL RULES:
+- The "amount" field MUST be a plain number in Indian Rupees (INR). Example: if the notice demands ₹2,50,000 write 250000. Do NOT convert to paise.
+- Always look for GSTIN (15-char format: 29ABCDE1234F1Z5) and PAN (10-char: ABCDE1234F) and extract them exactly.
+- For deadline: calculate the date from any phrases like "within 30 days" and return in YYYY-MM-DD format.
+- For non-GST/Income-tax notices (e.g., SEBI, Customs, RERA), still extract the relevant fields.
+- If this is a scam/phishing email (no legitimate government authority, asks for payment to a private account, contains threats not backed by law), set isIntimation to false and mark authority as "SUSPECTED PHISHING - DO NOT ACT".
+
+Return this exact JSON schema:
 {
-  "authority": "Issuing authority name, e.g. GST Department Maharashtra",
-  "noticeType": "Type of notice, e.g. Show Cause Notice, Demand Notice",
-  "amount": <number in INR (paise) or null>,
-  "deadline": "Response deadline in YYYY-MM-DD format or null",
-  "section": "Relevant section/act e.g. Section 74 of CGST Act 2017 or null",
-  "financialYear": "Financial year e.g. 2023-24 or null",
-  "nextSteps": "Bullet points detailing the recommended next steps the CA/tax professional should take to resolve or reply to this notice",
-  "requiredDocuments": "Bullet points listing exactly what documents or evidence the CA will need to collect from the client to draft the reply",
-  "extractedPan": "The 10-character alphanumeric PAN (Permanent Account Number) of the taxpayer mentioned in the document or null",
-  "extractedGstin": "The 15-character alphanumeric GSTIN of the taxpayer mentioned in the document or null",
-  "extractedBusinessName": "The name of the business or organization the notice is addressed to, or mentioned as the taxpayer",
-  "extractedContactName": "The name of the contact person, proprietor, or authorized signatory mentioned in the document",
-  "isIntimation": <boolean, true if this is just an email notification without the full document attached, false if it is a complete notice PDF>,
-  "isTranslated": <boolean, true if you had to translate the text from a non-English language (e.g. Hindi, Marathi, Tamil) to English>,
-  "originalLanguage": "The name of the original language if translated, otherwise null",
-  "summary": "A highly detailed, comprehensive paragraph (3-4 sentences) that deeply synthesizes key details from BOTH the email body (if provided) AND the attached document. Do NOT just summarize the email. You must extract the core facts from the attached document (like specific demands, sections, dates, background reasons, and actions required) and merge them with context from the email. Mention specific amounts, deadlines, and the core issue. IF the text was translated from a non-English language to English, you MUST append ' (Translated from [Language])' to the end of your summary. If it was already in English, do not add any note about translation."
+  "authority": "Full name of the issuing authority/department",
+  "noticeType": "Specific notice type e.g. Show Cause Notice under Section 74, Demand Notice, Scrutiny Notice",
+  "amount": <number in INR or null>,
+  "deadline": "YYYY-MM-DD or null",
+  "section": "Legal section(s) and Act name e.g. Section 74 of CGST Act, 2017",
+  "financialYear": "e.g. 2023-24 or null",
+  "nextSteps": "Numbered action list: what the CA must do immediately, within 7 days, and before the deadline",
+  "requiredDocuments": "Numbered list of documents the client must provide to draft the reply: GSTR filings, invoices, ledgers, bank statements etc.",
+  "extractedPan": "Exact 10-char PAN from the document or null",
+  "extractedGstin": "Exact 15-char GSTIN from the document or null",
+  "extractedBusinessName": "Business/company name that the notice is addressed to",
+  "extractedContactName": "Name of the proprietor, director, or authorized signatory",
+  "isIntimation": <true if this is an email alert without the full PDF notice, false if this IS the full notice>,
+  "isTranslated": <true if document was non-English and you translated it>,
+  "originalLanguage": "Language name if translated, else null",
+  "summary": "Write a 3-5 sentence executive summary for the CA. Must include: (1) who issued the notice, (2) what law/section was invoked, (3) the exact demand amount and financial year, (4) the core allegation or reason for the notice, (5) the deadline for response. If translated, append ' (Translated from [Language]).'"
 }
-If a field cannot be determined, use null. Return only the JSON object, nothing else.
-IMPORTANT: You may receive both an email body AND an attached document (PDF/Image). Synthesize information from BOTH to provide the best summary and field extraction.
-If the notice is in a language other than English, translate the gist to English for the summary and fields, and set 'isTranslated' to true.`;
+Return only the JSON object, no explanation, no markdown.`;
 
 // Create static clients
 const bedrock = new BedrockRuntimeClient({
@@ -140,7 +147,8 @@ export async function extractNoticeData(
         throw new Error("Both AI models failed to extract data.");
     } catch (error) {
         console.error("[Extraction] Parallel execution failed, falling back to mock:", error);
-        return extractMockData(startTime);
+        // Don't silently mock on production — re-throw so the caller knows
+        throw error;
     }
 }
 
@@ -198,14 +206,16 @@ async function extractWithBedrock(
 
     const command = new ConverseCommand({
         modelId: BEDROCK_MODEL_ID,
-        system: [{ text: "You are a helpful JSON extraction assistant." }],
+        system: [{ text: "You are an expert CA/tax consultant returning structured JSON only. No markdown, no commentary." }],
         messages,
-        inferenceConfig: { temperature: 0.0, maxTokens: 512 },
+        inferenceConfig: { temperature: 0.0, maxTokens: 2048 },
     });
 
     const response = await bedrock.send(command);
     const rawResponse = response.output?.message?.content?.[0]?.text ?? "";
-    const cleaned = rawResponse.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
+    // Strip any accidental markdown code fences
+    const cleaned = rawResponse.replace(/^```json\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/i, "").trim();
+    if (!cleaned) throw new Error("[Bedrock] Empty response from model");
     const data = JSON.parse(cleaned) as NoticeExtraction;
 
     return {
@@ -295,19 +305,29 @@ function extractMockData(startTime: number): ExtractionResult {
 // ─── Confidence scoring ───────────────────────────────────────────────────────
 
 function calculateConfidence(data: NoticeExtraction): "high" | "medium" | "low" {
-    const keyFields = [
+    // Tier-1: critical identification fields (weighted 2 points each)
+    const criticalFields = [
         data.authority,
         data.noticeType,
-        data.amount,
+        data.extractedGstin ?? data.extractedPan, // At least one ID
         data.deadline,
+    ];
+    // Tier-2: detail fields (1 point each)
+    const detailFields = [
         data.section,
+        data.amount,
+        data.financialYear,
+        data.summary && data.summary.length > 50 ? data.summary : null,
+        data.extractedBusinessName,
     ];
 
-    const filled = keyFields.filter((f) => f !== null && f !== undefined).length;
-    const ratio = filled / keyFields.length;
+    const criticalScore = criticalFields.filter((f) => f !== null && f !== undefined).length * 2;
+    const detailScore = detailFields.filter((f) => f !== null && f !== undefined).length;
+    const maxScore = criticalFields.length * 2 + detailFields.length; // 8 + 5 = 13
+    const ratio = (criticalScore + detailScore) / maxScore;
 
-    if (ratio >= 0.8) return "high";
-    if (ratio >= 0.5) return "medium";
+    if (ratio >= 0.75) return "high";
+    if (ratio >= 0.45) return "medium";
     return "low";
 }
 

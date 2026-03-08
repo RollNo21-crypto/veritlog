@@ -142,7 +142,8 @@ export async function pollEmailInbox(
                                 }).onConflictDoNothing({ target: tenants.id });
                                 console.log(`✅ [IMAP] Tenant record verified (Intimation): ${tenantId}`);
 
-                                const amountPaise = extraction.data.amount ? Math.round(extraction.data.amount * 100) : null;
+                                const MAX_INT = 2147483647;
+                                const amountPaise = extraction.data.amount ? Math.min(Math.round(extraction.data.amount * 100), MAX_INT) : null;
                                 const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
 
                                 await db.insert(notices).values({
@@ -164,7 +165,7 @@ export async function pollEmailInbox(
                                     riskLevel,
                                     isTranslated: extraction.data.isTranslated,
                                     originalLanguage: extraction.data.originalLanguage,
-                                    source: "email", // Keeping as email for dashboard filtering
+                                    source: "email",
                                     createdAt: new Date(),
                                     updatedAt: new Date(),
                                 });
@@ -186,13 +187,18 @@ export async function pollEmailInbox(
 
                                 result.processed++;
                                 console.log(`✅  [IMAP] Intimation created: ${noticeId}`);
+                                // ✅ Mark as Seen only after successful DB insertion
+                                try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                             } else {
                                 console.log(`⏭️ [IMAP] Skip: Not a notice-related email.`);
                                 result.skipped++;
+                                // Mark as Seen for non-notice emails too (no point in re-processing)
+                                try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
                             }
                         } catch (err) {
                             console.error(`❌ [IMAP] Error analyzing body: ${err}`);
                             result.failed++;
+                            // DO NOT mark as Seen — allow retry on next poll cycle
                         }
                     } else {
                         // 📎 Handle PDF / Image Attachments (Existing Logic)
@@ -249,7 +255,8 @@ export async function pollEmailInbox(
                                 }).onConflictDoNothing({ target: tenants.id });
                                 console.log(`✅ [IMAP] Tenant record verified (PDF): ${tenantId}`);
 
-                                const amountPaise = extraction.data.amount ? Math.round(extraction.data.amount * 100) : null;
+                                const MAX_INT = 2147483647;
+                                const amountPaise = extraction.data.amount ? Math.min(Math.round(extraction.data.amount * 100), MAX_INT) : null;
                                 const riskLevel = calcRisk(extraction.data.deadline, amountPaise);
                                 const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
@@ -291,22 +298,26 @@ export async function pollEmailInbox(
                                 });
 
                                 result.processed++;
+                                console.log(`✅  [IMAP] PDF notice created: ${noticeId}`);
                             } catch (pdfErr) {
                                 console.error(`❌  [IMAP] ERROR: Failed processing PDF ${filename}:`, pdfErr);
                                 result.failed++;
+                                // DO NOT mark as Seen if this PDF failed — allow retry on next poll cycle
                             }
                         }
-                    }
 
-                    // Mark as read after processing all attachments
-                    try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
+                        // Mark as Seen only if no failures occurred during attachment processing
+                        if (result.failed === 0) {
+                            try { await client.messageFlagsAdd(String(uid), ["\\Seen"], { uid: true }); } catch { /* ignore */ }
+                        }
+                    } // end else (PDF/Image branch)
                 } catch (msgErr) {
                     const errMsg = msgErr instanceof Error ? msgErr.message : String(msgErr);
                     console.error("🚨  [IMAP] CRITICAL: Message processing error:", errMsg);
                     result.failed++;
                     result.lastError = errMsg;
                 }
-            }
+            } // end for (uid of uids)
         } finally {
             lock.release();
         }

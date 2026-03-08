@@ -21,6 +21,9 @@ export interface S3UploadResult {
  */
 const s3 = new S3Client({
     region: process.env.AWS_REGION ?? "ap-south-1",
+    // Explicit regional endpoint prevents PermanentRedirect errors for non-us-east-1 buckets
+    endpoint: `https://s3.${process.env.AWS_REGION ?? "ap-south-1"}.amazonaws.com`,
+    forcePathStyle: false, // Virtual-hosted-style URLs (default for AWS S3)
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
