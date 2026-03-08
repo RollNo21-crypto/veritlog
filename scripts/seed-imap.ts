@@ -50,12 +50,12 @@ async function seedEmails() {
     // Generate PDFs beforehand
     console.log("Generating PDFs...");
 
-    // Email 1: Standard Notice with PDF
+    // Email 1: Standard Notice with PDF -> Maps to Acme Corp India
     const validNoticePdf = await createPdf(
         "SHOW CAUSE NOTICE\n\n" +
         "Reference Number: SCN-2026-0803\n" +
-        "GSTIN: 29ABCDE1234F1Z5\n" +
-        "Assessee: Alterann Ind\n\n" +
+        "GSTIN: 27ABCDE1234F1Z5\n" +
+        "Assessee: Acme Corp India\n\n" +
         "Subject: Demand under Section 73\n" +
         "Amount Demanded: Rs. 5,00,000.00\n" +
         "Date of Issue: 08/03/2026\n" +
@@ -72,10 +72,10 @@ async function seedEmails() {
         "Please remit payment by EOM."
     );
 
-    // Email 4: High Risk / Short Deadline foreign language
+    // Email 4: High Risk / Short Deadline foreign language -> Maps to Alterann Ind
     const spanishNoticePdf = await createPdf(
         "AVISO DE AUDITORÍA FISCAL\n\n" +
-        "Número de Registro: RUT 89.123.456-7\n" +
+        "PAN Registrado: ABCDE1238F\n" +
         "Entidad: Alterann Ind\n\n" +
         "Seccion: 14 B de la ley de Impuesto a la Renta\n" +
         "Monto Requerido: $250,500.00 CLP\n" +
@@ -92,8 +92,9 @@ async function seedEmails() {
             base64: validNoticePdf
         },
         {
+            // Maps to MarLabs purely via text body
             subject: "Alert: GST Intimation Required",
-            body: "Dear Alterann Ind,\n\nA new tax discrepancy has been flagged against your PAN ABCDE1238F for FY2022-23.\nThe estimated short payment is Rs. 14,000.50.\nPlease log into the portal to review the exact demand and reply. No document is attached.",
+            body: "Dear MarLabs,\n\nA new tax discrepancy has been flagged against your PAN AAA7687686 for FY2022-23.\nThe estimated short payment is Rs. 14,000.50.\nPlease log into the portal to review the exact demand and reply. No document is attached.",
         },
         {
             subject: "URGENT ACTION: YOUR ACCOUNT WAS HACKED!!",
@@ -112,8 +113,8 @@ async function seedEmails() {
             base64: spanishNoticePdf
         },
         {
-            subject: "Mismatch Detected - Alterann Ind vs Acme Corp",
-            body: "Notice: The trade name registered in our systems (Acme Corp) does not match the PAN registration records (Alterann Ind). Please update immediately.",
+            subject: "Mismatch Detected - Alterann Ind vs Acme Corp India",
+            body: "Notice: The trade name registered in our systems (Acme Corp India) does not match the PAN registration records (Alterann Ind). Please update immediately.",
         }
     ];
 
