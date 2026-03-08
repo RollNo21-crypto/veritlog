@@ -11,7 +11,11 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export async function GET(req: NextRequest) {
-    const secret = req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");
+    // Vercel cron sends: Authorization: Bearer <CRON_SECRET>
+    // Manual test uses: ?secret=xxx or x-cron-secret header
+    const authHeader = req.headers.get("authorization");
+    const bearerToken = authHeader?.startsWith("Bearer ") ? authHeader.slice(7) : null;
+    const secret = bearerToken ?? req.headers.get("x-cron-secret") ?? req.nextUrl.searchParams.get("secret");
     if (secret !== process.env.CRON_SECRET) {
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
