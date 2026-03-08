@@ -13,6 +13,7 @@ import { uploadToS3 } from "~/server/services/storage";
 import { db } from "~/server/db";
 import { notices, auditLogs, tenants } from "~/server/db/schema";
 import { eq } from "drizzle-orm";
+import { sendNewEmailAlertToCA } from "~/server/services/twilio";
 
 export type PollResult = {
     processed: number;
@@ -272,6 +273,12 @@ export async function pollEmailInbox(
         }
     } finally {
         try { await client.logout(); } catch { /* ignore */ }
+    }
+
+    // 🔔 Send WhatsApp alert to CA if any new emails were ingested this cycle
+    if (result.processed > 0) {
+        console.log(`📲 [IMAP] Firing WhatsApp CA notification for ${result.processed} new notice(s)...`);
+        void sendNewEmailAlertToCA(result.processed);
     }
 
     return result;

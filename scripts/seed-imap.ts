@@ -101,6 +101,42 @@ async function seedEmails() {
         "attachment of bank accounts and suspension of GSTIN."
     );
 
+    // Email 8: SEVERE - Bank Attachment Notice
+    const bankAttachmentPdf = await createPdf(
+        "OFFICE OF THE RECOVERY OFFICER\n" +
+        "INCOME TAX DEPARTMENT\n\n" +
+        "PAN: ABCDE1238F\n" +
+        "Entity: Alterann Ind\n\n" +
+        "ORDER OF ATTACHMENT OF BANK ACCOUNT\n" +
+        "Section 226(3) of the Income Tax Act, 1961\n\n" +
+        "Due to failure to clear outstanding demand of Rs. 45,00,000,\n" +
+        "your bank accounts are hereby attached. Immediate appearance\n" +
+        "required before the undersigned within 3 days."
+    );
+
+    // Email 9: NON-SEVERE - Routine Information Request
+    const infoRequestPdf = await createPdf(
+        "DEPARTMENT OF COMMERCIAL TAXES\n\n" +
+        "GSTIN: 27ABCDE1234F1Z5\n" +
+        "Entity: Acme Corp India\n\n" +
+        "Subject: Clarification on HSN Codes\n\n" +
+        "This is a routine request to provide clarification regarding\n" +
+        "the HSN codes used in your GSTR-1 for the month of December 2025.\n" +
+        "Please submit the classification worksheet at your earliest convenience.\n" +
+        "No immediate demand is raised."
+    );
+
+    // Email 10: NON-SEVERE - Refund Rejection
+    const refundRejectionPdf = await createPdf(
+        "GOODS AND SERVICES TAX NETWORK\n\n" +
+        "PAN: AAA7687686\n" +
+        "Entity: MarLabs\n\n" +
+        "ORDER OF REJECTION OF REFUND CLAIM\n\n" +
+        "Your application for refund of accumulated ITC amounting to\n" +
+        "Rs. 2,50,000 has been partially rejected due to missing\n" +
+        "invoices. Please file an appeal if you wish to contest."
+    );
+
     // Compile Scenarios
     const emails = [
         {
@@ -139,6 +175,24 @@ async function seedEmails() {
             body: "Dear Assessee, please find the attached demand notice issued by DGGI. Immediate compliance is required.",
             filename: "dggi_demand_5cr.pdf",
             base64: superHighRiskPdf
+        },
+        {
+            subject: "CRITICAL: Bank Account Attachment Order",
+            body: "Warning: Your bank accounts have been marked for attachment due to unpaid tax dues. See attached order.",
+            filename: "it_bank_attachment.pdf",
+            base64: bankAttachmentPdf
+        },
+        {
+            subject: "Routine Clarification Needed: HSN Codes",
+            body: "Please find attached a request for clarification regarding your recent GSTR-1 filings. This is an informational request.",
+            filename: "hsn_clarification_req.pdf",
+            base64: infoRequestPdf
+        },
+        {
+            subject: "Update on GST Refund Application",
+            body: "Your recent application for GST refund has been processed. Please review the attached order for details on rejected amounts.",
+            filename: "refund_rejection_order.pdf",
+            base64: refundRejectionPdf
         }
     ];
 

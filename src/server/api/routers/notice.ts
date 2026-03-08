@@ -561,7 +561,23 @@ export const noticeRouter = createTRPCRouter({
 
                     if (matchedClients[0]) {
                         matchedClientId = matchedClients[0].id;
+
+                        // 📱 Notify matched client via WhatsApp about the new notice
+                        const clientPhone = matchedClients[0].contactPhone;
+                        if (clientPhone) {
+                            const amountRupees = amountPaise ? amountPaise / 100 : null;
+                            void sendHighRiskWhatsAppAlert({
+                                noticeId: input.id,
+                                authority: extraction.data.authority || "Tax Authority",
+                                businessName: matchedClients[0].businessName,
+                                amount: amountRupees,
+                                deadline: extraction.data.deadline,
+                                clientPhone,
+                            });
+                            console.log(`[Notice] Sent WhatsApp notice alert to matched client: ${matchedClients[0].businessName} (${clientPhone})`);
+                        }
                     }
+
                 }
             }
 
