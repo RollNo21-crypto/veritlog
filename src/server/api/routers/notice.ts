@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
 import { extractNoticeData, translateNoticeDocument, generateDraftResponse } from "~/server/services/extraction";
-import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl } from "~/server/services/storage";
+import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl, getFileObject } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
 import { generateShareToken } from "~/server/services/shareToken";
 import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
@@ -488,10 +488,9 @@ export const noticeRouter = createTRPCRouter({
                 try {
                     const fileName = "Email_Body.txt";
                     const s3Key = `${tenantId}/${notice.id}/${fileName}`;
-                    const presignedUrl = await getPresignedUrl(s3Key, 300);
-                    const fileRes = await fetch(presignedUrl);
-                    if (fileRes.ok) {
-                        emailText = await fileRes.text();
+                    const fileObj = await getFileObject(s3Key);
+                    if (fileObj.Body) {
+                        emailText = await fileObj.Body.transformToString();
                     }
                 } catch (e) {
                     console.error("Failed to fetch email intimation body", e);
@@ -507,11 +506,10 @@ export const noticeRouter = createTRPCRouter({
 
                     // Reconstruct S3 key
                     const s3Key = `${tenantId}/${notice.id}/${fileName}`;
-                    const presignedUrl = await getPresignedUrl(s3Key, 300);
-                    const fileRes = await fetch(presignedUrl);
-                    if (fileRes.ok) {
-                        const arrayBuffer = await fileRes.arrayBuffer();
-                        const fileBase64 = Buffer.from(arrayBuffer).toString("base64");
+                    const fileObj = await getFileObject(s3Key);
+                    if (fileObj.Body) {
+                        const byteArray = await fileObj.Body.transformToByteArray();
+                        const fileBase64 = Buffer.from(byteArray).toString("base64");
                         documentDataUrl = `data:${mimeType};base64,${fileBase64}`;
                     }
                 } catch (err) {
