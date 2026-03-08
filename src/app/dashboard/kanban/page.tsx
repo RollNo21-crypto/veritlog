@@ -190,14 +190,7 @@ function SortableCard({
                     </div>
                 )}
 
-                {/* Assignee */}
-                <div className="mt-2">
-                    <AssigneeSelect
-                        noticeId={notice.id}
-                        currentAssignee={notice.assignedTo}
-                        size="sm"
-                    />
-                </div>
+
 
                 {/* Close button (only for non-closed) */}
                 {notice.status !== "closed" && (
