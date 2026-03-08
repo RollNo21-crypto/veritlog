@@ -88,6 +88,19 @@ async function seedEmails() {
         "5 days of receipt of this notice."
     );
 
+    // Email 7: SUPER HIGH RISK - Triggers WhatsApp Alert
+    const superHighRiskPdf = await createPdf(
+        "DIRECTORATE GENERAL OF GST INTELLIGENCE (DGGI)\n\n" +
+        "URGENT SHOW CAUSE CUM DEMAND NOTICE\n\n" +
+        "PAN: AAA7687686\n" +
+        "Entity: MarLabs\n\n" +
+        "Subject: Evasion of GST under Section 74\n" +
+        "Demand Amount: Rs. 5,00,00,000 (Five Crores Only)\n" +
+        "Deadline: IMMEDIATE ACTION REQUIRED. Respond within 24 hours.\n\n" +
+        "Failure to deposit the demanded amount will result in immediate\n" +
+        "attachment of bank accounts and suspension of GSTIN."
+    );
+
     // Compile Scenarios
     const emails = [
         {
@@ -120,6 +133,12 @@ async function seedEmails() {
         {
             subject: "MCA Alert: Mismatch Detected - Alterann Ind vs Acme Corp India",
             body: "Notice: The trade name registered in MCA portal (Acme Corp India) does not match the GSTIN registration records (Alterann Ind). Please update Director KYC immediately.",
+        },
+        {
+            subject: "URGENT: DGGI Demand Notice (Rs 5.0 Cr)",
+            body: "Dear Assessee, please find the attached demand notice issued by DGGI. Immediate compliance is required.",
+            filename: "dggi_demand_5cr.pdf",
+            base64: superHighRiskPdf
         }
     ];
 
