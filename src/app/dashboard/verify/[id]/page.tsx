@@ -24,6 +24,9 @@ import {
     FileDown,
     UploadCloud,
     Lock,
+    ShieldCheck,
+    CreditCard,
+    Smartphone,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -38,6 +41,12 @@ import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { Skeleton } from "~/components/ui/skeleton";
 import { toast } from "sonner";
 import { Separator } from "~/components/ui/separator";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogTitle,
+} from "~/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import {
     Select,
@@ -231,6 +240,12 @@ export default function VerifyNoticePage() {
         onError: () => toast.error("Failed to delete comment"),
     });
 
+    const updateStatusMutation = api.notice.updateStatus.useMutation();
+    const sendPaymentLinkMutation = api.notice.sendPaymentLink.useMutation({
+        onSuccess: () => toast.success("Payment link sent to customer via WhatsApp"),
+        onError: (err) => toast.error(`Failed to send link: ${err.message}`),
+    });
+
     const flagTemplateMutation = api.notice.flagTemplateIssue.useMutation({
         onSuccess: () => {
             toast.success("Template issue flagged. Dev team notified.");
@@ -372,15 +387,45 @@ export default function VerifyNoticePage() {
                         </Button>
                     )}
 
-                    {/* Download Audit Report — Story 6.1 */}
+                    {/* Pine Labs 1-Click Pay */}
+                    {formData.amount && notice.status !== "closed" && (
+                        <div className="flex items-center gap-2">
+                            <Button
+                                variant="default"
+                                size="sm"
+                                onClick={() => router.push(`/pay/${noticeId}`)}
+                                className="bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm animate-in fade-in"
+                            >
+                                <ShieldCheck className="mr-2 h-4 w-4" />
+                                Pay Penalty (Pine Labs)
+                            </Button>
+                            <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => sendPaymentLinkMutation.mutate({ noticeId })}
+                                disabled={sendPaymentLinkMutation.isPending}
+                                className="border-emerald-600 text-emerald-600 hover:bg-emerald-50 shadow-sm animate-in fade-in"
+                            >
+                                {sendPaymentLinkMutation.isPending ? (
+                                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                                ) : (
+                                    <Smartphone className="mr-2 h-4 w-4" />
+                                )}
+                                Send Link to Customer
+                            </Button>
+                        </div>
+                    )}
+
+                    {/* AI Audit Report (Prominent) */}
                     {["verified", "closed", "approved"].includes(notice.status) && (
                         <Button
                             variant="outline"
                             size="sm"
                             onClick={() => window.open(`/api/notice/${noticeId}/audit-report`, "_blank")}
+                            className="border-indigo-600 text-indigo-600 hover:bg-indigo-50 font-bold"
                         >
-                            <FileDown className="mr-2 h-4 w-4" />
-                            Audit Report
+                            <ShieldCheck className="mr-2 h-4 w-4" />
+                            AI Audit Report
                         </Button>
                     )}
                     <Button variant="outline" size="sm" onClick={handleSave} disabled={updateMutation.isPending || summarizeMutation.isPending}>

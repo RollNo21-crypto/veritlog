@@ -158,7 +158,7 @@ function SortableCard({
 
                 <div className="mt-2 flex flex-wrap items-center gap-1">
                     {notice.riskLevel === "high" && (
-                        <Badge variant="destructive" className="text-xs">High Risk</Badge>
+                        <Badge variant="destructive" className="text-xs">HIGH RISK</Badge>
                     )}
                     {notice.riskLevel === "medium" && (
                         <Badge variant="secondary" className="text-xs">Med Risk</Badge>

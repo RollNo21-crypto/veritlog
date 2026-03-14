@@ -123,7 +123,7 @@ export default function AnalyticsPage() {
                     highlight="green"
                 />
                 <MetricCard
-                    title="High Risk"
+                    title="HIGH RISK"
                     value={highRisk}
                     sub={`${highRiskRate}% of total`}
                     icon={<AlertTriangle className="h-5 w-5 text-destructive" />}
@@ -221,7 +221,7 @@ export default function AnalyticsPage() {
                         ) : (
                             <>
                                 {[
-                                    { label: "High Risk", count: highRisk, color: "bg-destructive" },
+                                    { label: "HIGH RISK", count: highRisk, color: "bg-destructive" },
                                     { label: "Medium Risk", count: mediumRisk, color: "bg-yellow-500" },
                                     { label: "Low Risk", count: lowRisk, color: "bg-green-500" },
                                 ].map(({ label, count, color }) => {

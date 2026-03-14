@@ -13,6 +13,7 @@ import {
     Loader2,
     Calendar,
     Building2,
+    Smartphone,
 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Badge } from "~/components/ui/badge";
@@ -231,7 +232,18 @@ export default function ReviewQueuePage() {
                                                 {notice.riskLevel} risk
                                             </Badge>
                                         )}
-                                        <div onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                        <div className="flex items-center gap-2" onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}>
+                                            {notice.amount && notice.status !== "closed" && (
+                                                <Button
+                                                    variant="outline"
+                                                    size="sm"
+                                                    onClick={() => window.location.href = `/pay/${notice.id}`}
+                                                    className="h-8 border-emerald-600 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                                                >
+                                                    <Smartphone className="mr-1.5 h-3.5 w-3.5" />
+                                                    Pay
+                                                </Button>
+                                            )}
                                             <StatusSelect
                                                 noticeId={notice.id}
                                                 currentStatus={notice.status}

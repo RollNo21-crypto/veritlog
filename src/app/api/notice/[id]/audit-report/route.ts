@@ -25,11 +25,6 @@ export async function GET(
 ) {
     const resolvedParams = await params;
     const { userId, orgId } = await auth();
-    if (!userId) {
-        return new NextResponse("Unauthorized", { status: 401 });
-    }
-
-    const tenantId = orgId || userId;
 
     // ── Load notice ──────────────────────────────────────────────────────────
     const [notice] = await db
@@ -38,7 +33,6 @@ export async function GET(
         .where(
             and(
                 eq(notices.id, resolvedParams.id),
-                eq(notices.tenantId, tenantId),
                 isNull(notices.deletedAt)
             )
         )
@@ -47,6 +41,23 @@ export async function GET(
     if (!notice) {
         return new NextResponse("Notice not found", { status: 404 });
     }
+
+    // Authorization: Must be authenticated OR notice must be CLOSED for public access
+    const isPublicAccess = notice.status === "closed";
+    if (!userId && !isPublicAccess) {
+        return new NextResponse("Unauthorized", { status: 401 });
+    }
+
+    // If authenticated, ensure tenant matches (security)
+    // SKIP this check if it's public access (the notice is closed).
+    // Otherwise, allow if notice.tenantId matches either the userId or the active orgId.
+    if (userId && !isPublicAccess) {
+        if (notice.tenantId !== userId && notice.tenantId !== orgId) {
+            return new NextResponse("Forbidden", { status: 403 });
+        }
+    }
+
+    const tenantId = notice.tenantId;
 
     // ── Load audit trail ─────────────────────────────────────────────────────
     const auditEntries = await db
@@ -163,14 +174,22 @@ export async function GET(
   </div>
 </div>
 
-<!-- Notice Summary -->
-<h2>Notice Summary</h2>
+<!-- AI Audit Analysis -->
 ${defenseSummary ? `
-<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:12px 16px; margin-bottom:16px;">
-    <h3 style="font-size:11px; text-transform:uppercase; color:#166534; margin-bottom:6px; font-weight:700; letter-spacing:0.05em">
-        🛡️ AI Defensibility Summary
-    </h3>
-    <p style="font-size:13px; color:#166534; line-height:1.5">${defenseSummary}</p>
+<div style="background:#f8fafc; border:2px solid #e2e8f0; border-radius:12px; padding:20px; margin-bottom:24px; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1);">
+    <div style="display:flex; align-items:center; gap:8px; margin-bottom:12px;">
+        <span style="font-size:18px;">🛡️</span>
+        <h3 style="font-size:12px; text-transform:uppercase; color:#0f172a; margin:0; font-weight:800; letter-spacing:0.1em">
+            Senior AI Compliance Audit
+        </h3>
+    </div>
+    <div style="font-size:13px; color:#334155; line-height:1.6; font-style:italic;">
+        ${defenseSummary.split('\n\n').map(p => `<p style="margin-bottom:10px">${p}</p>`).join('')}
+    </div>
+    <div style="margin-top:12px; padding-top:12px; border-top:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:center;">
+        <span style="font-size:10px; color:#94a3b8; font-weight:600; text-transform:uppercase;">Automated Synthesis Engine: Gemini 2.0 Flash</span>
+        <span style="font-size:10px; padding:2px 8px; background:#f1f5f9; border-radius:4px; font-weight:700; color:#475569;">VERIFIED BY VERITLOG AI</span>
+    </div>
 </div>` : ""}
 <div class="grid">
   <div class="field"><label>Notice Type</label><span>${notice.noticeType ?? "—"}</span></div>

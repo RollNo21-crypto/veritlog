@@ -1,9 +1,10 @@
 import { z } from "zod";
-import { createTRPCRouter, protectedProcedure } from "~/server/api/trpc";
+import { createTRPCRouter, protectedProcedure, publicProcedure } from "~/server/api/trpc";
+import { TRPCError } from "@trpc/server";
 import { extractNoticeData, translateNoticeDocument, generateDraftResponse } from "~/server/services/extraction";
 import { uploadToS3, dataUrlToBuffer, getFileViewUrl, getPresignedUrl, getFileObject } from "~/server/services/storage";
 import { alertHighRisk } from "~/server/services/whatsapp";
-import { sendHighRiskWhatsAppAlert } from "~/server/services/twilio";
+import { sendHighRiskWhatsAppAlert, sendPaymentLinkWhatsApp } from "~/server/services/twilio";
 import { generateShareToken } from "~/server/services/shareToken";
 import { notices, auditLogs, attachments, clients } from "~/server/db/schema";
 import { eq, and, isNull, desc, asc, sql, getTableColumns, or, ilike } from "drizzle-orm";
@@ -77,7 +78,8 @@ export const noticeRouter = createTRPCRouter({
             // Run AI extraction (uses file URL or base64 content)
             const extraction = await extractNoticeData(fileUrl, "parallel");
             const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
-            const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
+            // Prefer AI's semantic risk level over static math calculation
+            const riskLevel = extraction.data.riskLevel || calculateRiskLevel(extraction.data.deadline, amountPaise);
             const status = extraction.confidence === "low" ? "review_needed" : "processing";
 
             // Entity Mismatch Detection
@@ -162,9 +164,28 @@ export const noticeRouter = createTRPCRouter({
                     .set(noticeValues)
                     .where(and(eq(notices.id, input.replaceNoticeId), eq(notices.tenantId, tenantId)));
             } else {
-                await ctx.db.insert(notices).values({
-                    ...noticeValues,
-                    createdAt: new Date(),
+                await ctx.db.transaction(async (tx) => {
+                    await tx.insert(notices).values({
+                        ...noticeValues,
+                        createdAt: new Date(),
+                    });
+
+                    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                    await tx.insert(auditLogs).values({
+                        id: auditId,
+                        tenantId,
+                        userId: ctx.session.userId,
+                        action: "notice.created",
+                        entityType: "notice",
+                        entityId: noticeId,
+                        newValue: JSON.stringify({
+                            fileName: input.fileName,
+                            authority: extraction.data.authority,
+                            riskLevel,
+                            confidence: extraction.confidence,
+                        }),
+                        createdAt: new Date(),
+                    });
                 });
             }
 
@@ -179,6 +200,11 @@ export const noticeRouter = createTRPCRouter({
                     amount: amountPaise,
                     deepLinkToken: shareToken,
                 });
+                // Mark the notice as escalated (best-effort; not blocking)
+                void ctx.db
+                    .update(notices)
+                    .set({ isEscalated: true })
+                    .where(eq(notices.id, noticeId));
             }
 
             return {
@@ -304,38 +330,76 @@ export const noticeRouter = createTRPCRouter({
         )
         .mutation(async ({ ctx, input }) => {
             const tenantId = ctx.session.userId;
-            if (!tenantId) {
-                throw new Error("No organization or user selected");
-            }
+            const userId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
 
             const { id, ...updates } = input;
 
-            // Recalculate risk if deadline or amount changed
-            let riskLevel: string | undefined;
-            if (updates.deadline !== undefined || updates.amount !== undefined) {
-                const current = await ctx.db
+            const result = await ctx.db.transaction(async (tx) => {
+                const [current] = await tx
                     .select()
                     .from(notices)
-                    .where(eq(notices.id, id))
+                    .where(and(eq(notices.id, id), eq(notices.tenantId, tenantId)))
                     .limit(1);
 
-                if (current[0]) {
-                    const amountPaise = updates.amount !== undefined ? updates.amount : current[0].amount;
-                    const deadline = updates.deadline !== undefined ? updates.deadline : current[0].deadline;
+                if (!current) throw new TRPCError({ code: "NOT_FOUND", message: "Notice not found" });
+
+                // Recalculate risk if deadline or amount changed
+                let riskLevel: string | undefined;
+                if (updates.deadline !== undefined || updates.amount !== undefined) {
+                    const amountPaise = updates.amount !== undefined ? updates.amount : current.amount;
+                    const deadline = updates.deadline !== undefined ? updates.deadline : current.deadline;
                     riskLevel = calculateRiskLevel(deadline, amountPaise);
                 }
-            }
 
-            await ctx.db
-                .update(notices)
-                .set({
-                    ...updates,
-                    ...(riskLevel ? { riskLevel } : {}),
-                    updatedAt: new Date(),
-                })
-                .where(and(eq(notices.id, id), eq(notices.tenantId, tenantId)));
+                // Field-level diffing for Audit Log
+                const previousValue: Record<string, any> = {};
+                const newValue: Record<string, any> = {};
+                let hasChanges = false;
 
-            return { success: true };
+                for (const [key, value] of Object.entries(updates)) {
+                    const oldVal = (current as any)[key];
+                    if (value !== oldVal) {
+                        previousValue[key] = oldVal;
+                        newValue[key] = value;
+                        hasChanges = true;
+                    }
+                }
+
+                if (riskLevel && riskLevel !== current.riskLevel) {
+                    previousValue.riskLevel = current.riskLevel;
+                    newValue.riskLevel = riskLevel;
+                    hasChanges = true;
+                }
+
+                if (!hasChanges) return { success: true };
+
+                await tx
+                    .update(notices)
+                    .set({
+                        ...updates,
+                        ...(riskLevel ? { riskLevel } : {}),
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId,
+                    action: "notice.updated",
+                    entityType: "notice",
+                    entityId: id,
+                    previousValue: JSON.stringify(previousValue),
+                    newValue: JSON.stringify(newValue),
+                    createdAt: new Date(),
+                });
+
+                return { success: true };
+            });
+
+            return result;
         }),
 
     /**
@@ -397,6 +461,20 @@ export const noticeRouter = createTRPCRouter({
 
             const dataUrl = `data:${mimeType};base64,${fileBase64}`;
             const translation = await translateNoticeDocument(dataUrl);
+
+            // Audit the translation action
+            const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            await ctx.db.insert(auditLogs).values({
+                id: auditId,
+                tenantId,
+                userId: ctx.session.userId,
+                action: "notice.translated",
+                entityType: "notice",
+                entityId: input.id,
+                newValue: JSON.stringify({ lang: noticeRecord.originalLanguage || "Auto-detected" }),
+                createdAt: new Date(),
+            });
+
             return { translation };
         }),
 
@@ -521,7 +599,8 @@ export const noticeRouter = createTRPCRouter({
             // Run AI extraction
             const extraction = await extractNoticeData(documentDataUrl === "#" ? null : documentDataUrl, "parallel", emailText);
             const amountPaise = extraction.data.amount ? extraction.data.amount * 100 : null;
-            const riskLevel = calculateRiskLevel(extraction.data.deadline, amountPaise);
+            // Prefer AI semantic risk assessment
+            const riskLevel = extraction.data.riskLevel || calculateRiskLevel(extraction.data.deadline, amountPaise);
             // Always require human review after AI summarization
             const status = "review_needed";
 
@@ -534,6 +613,12 @@ export const noticeRouter = createTRPCRouter({
                     businessName: extraction.data.extractedBusinessName || "Unknown Client",
                     amount: amountPaise,
                     deadline: extraction.data.deadline,
+                }).then(() => {
+                    // Mark as escalated in DB after successful alert
+                    void ctx.db
+                        .update(notices)
+                        .set({ isEscalated: true })
+                        .where(eq(notices.id, input.id));
                 });
             }
 
@@ -565,12 +650,11 @@ export const noticeRouter = createTRPCRouter({
                         // 📱 Notify matched client via WhatsApp about the new notice
                         const clientPhone = matchedClients[0].contactPhone;
                         if (clientPhone) {
-                            const amountRupees = amountPaise ? amountPaise / 100 : null;
                             void sendHighRiskWhatsAppAlert({
                                 noticeId: input.id,
                                 authority: extraction.data.authority || "Tax Authority",
                                 businessName: matchedClients[0].businessName,
-                                amount: amountRupees,
+                                amount: amountPaise,
                                 deadline: extraction.data.deadline,
                                 clientPhone,
                             });
@@ -858,13 +942,26 @@ export const noticeRouter = createTRPCRouter({
                 throw new Error("No organization or user selected");
             }
 
-            await ctx.db
-                .update(notices)
-                .set({
-                    deletedAt: new Date(),
-                    updatedAt: new Date(),
-                })
-                .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+            await ctx.db.transaction(async (tx) => {
+                await tx
+                    .update(notices)
+                    .set({
+                        deletedAt: new Date(),
+                        updatedAt: new Date(),
+                    })
+                    .where(and(eq(notices.id, input.id), eq(notices.tenantId, tenantId)));
+
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId,
+                    userId: ctx.session.userId,
+                    action: "notice.deleted",
+                    entityType: "notice",
+                    entityId: input.id,
+                    createdAt: new Date(),
+                });
+            });
 
             return { success: true };
         }),
@@ -1045,5 +1142,143 @@ export const noticeRouter = createTRPCRouter({
             });
 
             return { success: true, attachmentId };
+        }),
+
+    /**
+     * Public procedure to get notice details for the payment page
+     */
+    getPublicDetails: publicProcedure
+        .input(z.object({ id: z.string() }))
+        .query(async ({ ctx, input }) => {
+            const notice = await ctx.db
+                .select({
+                    id: notices.id,
+                    authority: notices.authority,
+                    amount: notices.amount,
+                    deadline: notices.deadline,
+                    noticeType: notices.noticeType,
+                    status: notices.status,
+                    clientId: notices.clientId,
+                })
+                .from(notices)
+                .where(and(eq(notices.id, input.id), isNull(notices.deletedAt)))
+                .limit(1)
+                .then((res) => res[0]);
+
+            if (!notice) throw new TRPCError({ code: "NOT_FOUND", message: "Notice not found" });
+
+            return notice;
+        }),
+
+    /**
+     * Public procedure to update status on payment completion
+     */
+    updateStatusPublic: publicProcedure
+        .input(
+            z.object({
+                id: z.string(),
+                status: z.enum(["processing", "review_needed", "verified", "in_progress", "closed"]),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const result = await ctx.db.transaction(async (tx) => {
+                const [notice] = await tx
+                    .select()
+                    .from(notices)
+                    .where(eq(notices.id, input.id))
+                    .limit(1);
+
+                if (!notice) throw new TRPCError({ code: "NOT_FOUND", message: "Notice not found" });
+
+                await tx
+                    .update(notices)
+                    .set({ status: input.status, updatedAt: new Date() })
+                    .where(eq(notices.id, input.id));
+
+                // Log the payment/closure in the immutable audit trail
+                const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+                await tx.insert(auditLogs).values({
+                    id: auditId,
+                    tenantId: notice.tenantId,
+                    userId: "PINE_LABS_GATEWAY",
+                    action: "notice.closed",
+                    entityType: "notice",
+                    entityId: input.id,
+                    newValue: JSON.stringify({
+                        status: input.status,
+                        paymentMethod: "Pine Labs Escrow",
+                        settlementStatus: "Confirmed",
+                        amount: notice.amount ? `₹${(notice.amount / 100).toLocaleString("en-IN")}` : "N/A"
+                    }),
+                    createdAt: new Date(),
+                });
+
+                return { success: true };
+            });
+
+            return result;
+        }),
+
+    /**
+     * Send Pine Labs payment link to the customer via WhatsApp
+     */
+    sendPaymentLink: protectedProcedure
+        .input(
+            z.object({
+                noticeId: z.string(),
+            })
+        )
+        .mutation(async ({ ctx, input }) => {
+            const tenantId = ctx.session.userId;
+            if (!tenantId) throw new Error("No organization or user selected");
+
+            const notice = await ctx.db
+                .select()
+                .from(notices)
+                .where(and(eq(notices.id, input.noticeId), eq(notices.tenantId, tenantId)))
+                .limit(1)
+                .then((res) => res[0]);
+
+            if (!notice) throw new Error("Notice not found");
+
+            // Look up client phone if available
+            let clientPhone = null;
+            if (notice.clientId) {
+                const clientRecord = await ctx.db
+                    .select({ contactPhone: clients.contactPhone })
+                    .from(clients)
+                    .where(eq(clients.id, notice.clientId))
+                    .limit(1)
+                    .then(res => res[0]);
+                if (clientRecord?.contactPhone) {
+                    clientPhone = clientRecord.contactPhone;
+                }
+            }
+
+            const success = await sendPaymentLinkWhatsApp({
+                noticeId: notice.id,
+                authority: notice.authority || "Government Authority",
+                amount: notice.amount,
+                clientPhone,
+            });
+
+            if (!success) {
+                throw new Error("Failed to send payment link via WhatsApp");
+            }
+
+            // Audit the action
+            const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+            await ctx.db.insert(auditLogs).values({
+                id: auditId,
+                tenantId,
+                userId: ctx.session.userId,
+                action: "notice.payment_link_sent",
+                entityType: "notice",
+                entityId: input.noticeId,
+                newValue: JSON.stringify({ sentTo: clientPhone || "Primary Contact" }),
+                createdAt: new Date(),
+            });
+
+            return { success: true };
         }),
 });

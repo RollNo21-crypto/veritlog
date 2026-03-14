@@ -30,6 +30,7 @@ export interface NoticeExtraction {
     isIntimation: boolean;
     isTranslated: boolean;
     originalLanguage: string | null;
+    riskLevel: "high" | "medium" | "low" | null;
 }
 
 export interface ExtractionResult {
@@ -70,7 +71,8 @@ Return this exact JSON schema:
   "isIntimation": <true if this is an email alert without the full PDF notice, false if this IS the full notice>,
   "isTranslated": <true if document was non-English and you translated it>,
   "originalLanguage": "Language name if translated, else null",
-  "summary": "Write a 3-5 sentence executive summary for the CA. Must include: (1) who issued the notice, (2) what law/section was invoked, (3) the exact demand amount and financial year, (4) the core allegation or reason for the notice, (5) the deadline for response. If translated, append ' (Translated from [Language]).'"
+  "summary": "Write a 3-5 sentence executive summary for the CA. Must include: (1) who issued the notice, (2) what law/section was invoked, (3) the exact demand amount and financial year, (4) the core allegation or reason for the notice, (5) the deadline for response. If translated, append ' (Translated from [Language]).'",
+  "riskLevel": "Classify the risk level as 'high', 'medium', or 'low'. STRICTLY 'high' if there are large penalties, cancellation threats, or imminent deadlines (<= 7 days)."
 }
 Return only the JSON object, no explanation, no markdown.`;
 
@@ -295,6 +297,7 @@ function extractMockData(startTime: number): ExtractionResult {
             isIntimation: false,
             isTranslated: false,
             originalLanguage: null,
+            riskLevel: "high",
         },
         confidence: "medium",
         provider: "mock",
@@ -531,35 +534,41 @@ export async function generateDossierSummary(
     comments: any[]
 ): Promise<string | null> {
     try {
-        const prompt = `You are an expert tax audit compliance officer.
-Please generate a "Defensibility Summary" for this tax notice, based on the following timeline of events and staff comments.
-Make it a single paragraph, professional, and focusing on whether the correct steps were taken, the evidence provided, and the final resolution readiness.
+        const prompt = `You are a Senior AI Compliance Auditor. 
+Your task is to review the end-to-end lifecycle of a tax/statutory notice and provide a definitive "AI Audit Analysis".
 
-Notice Details:
-Type: ${notice.noticeType}
-Status: ${notice.status}
-Amount: ${notice.amount ? notice.amount / 100 : 0}
+NOTICE DATA:
+- Type: ${notice.noticeType}
+- Authority: ${notice.authority}
+- Final Status: ${notice.status}
+- Demand Amount: ${notice.amount ? `₹${(notice.amount / 100).toLocaleString("en-IN")}` : "None"}
 
-Timeline (Audit Logs):
-${auditLogs.map((log: any) => `- ${new Date(log.createdAt).toISOString().split('T')[0]}: ${log.action}`).join('\n')}
+ACTIVITY TRAIL:
+${auditLogs.map((log: any) => `- [${new Date(log.createdAt).toLocaleDateString()}] Action: ${log.action} | Detail: ${log.newValue || "Standard Action"}`).join('\n')}
 
-Staff Comments & Notes:
+STAFF NOTES:
 ${comments.map((c: any) => `- ${c.content}`).join('\n')}
 
-Generate the concise Defense Summary:`;
+INSTRUCTIONS:
+Provide a 2-para professional synthesis covering:
+1. **Procedural Integrity**: Did the team follow the correct steps? (Ingestion -> AI Extraction -> Verification -> Resolution).
+2. **Defensibility Verdict**: Based on the audit trail and proof, is the resolution (e.g., closing/payment) legally sound? 
+3. **Pine Labs Settlement**: If a payment was made via the gateway, explicitly verify its settlement in the audit trail.
+
+Format: Return a professional, objective analysis. No intro like "Here is the summary". Start directly.`;
 
         const response = await gemini.models.generateContent({
             model: GEMINI_MODEL_ID,
             contents: [{ role: "user", parts: [{ text: prompt }] }],
             config: {
-                temperature: 0.2,
-                maxOutputTokens: 300,
+                temperature: 0.1,
+                maxOutputTokens: 500,
             },
         });
 
         return response.text?.trim() || null;
     } catch (e) {
-        console.error("[Dossier Summary] Failed to generate dossier summary:", e);
+        console.error("[Dossier Summary] Failed to generate AI Audit Analysis:", e);
         return null;
     }
 }
