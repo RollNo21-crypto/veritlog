@@ -1,18 +1,15 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { api } from "~/trpc/react";
 import {
     ShieldCheck,
-    CreditCard,
     Lock,
-    CheckCircle2,
     Loader2,
     AlertTriangle,
     Building2,
     Calendar,
-    Receipt,
     XCircle,
     RefreshCcw,
     User,
@@ -20,6 +17,7 @@ import {
     Phone,
     MapPin,
     Smartphone,
+    CheckCircle2,
 } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
@@ -28,14 +26,28 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "~/componen
 import { Badge } from "~/components/ui/badge";
 import { toast } from "sonner";
 
+/**
+ * /pay/[noticeId]
+ *
+ * Unidirectional flow:
+ *   1. User fills billing details and clicks "Pay"
+ *   2. We call POST /api/pine-labs/create-order → get checkoutUrl
+ *   3. Browser redirects to Pine Labs hosted checkout page
+ *   4. Pine Labs POSTs back to /api/pine-labs/callback (server-side)
+ *      └── callback verifies, closes notice, writes audit log
+ *      └── On SUCCESS → redirects to /api/notice/[id]/audit-report
+ *      └── On FAILURE → redirects back here with ?pl_status=FAILED
+ *   5. If ?pl_status=FAILED → show retry screen
+ *
+ * This page NEVER calls the verify API — that is entirely handled server-side in callback.
+ */
 export default function PublicPaymentPage() {
     const params = useParams();
     const searchParams = useSearchParams();
     const noticeId = params.id as string;
+    const paymentFailed = searchParams.get("pl_status") === "FAILED";
 
     const [isProcessing, setIsProcessing] = useState(false);
-    const [isVerifying, setIsVerifying] = useState(false);
-    const [verificationResult, setVerificationResult] = useState<"SUCCESS" | "FAILED" | "PENDING" | null>(null);
 
     // Form state
     const [customerName, setCustomerName] = useState("");
@@ -46,55 +58,16 @@ export default function PublicPaymentPage() {
     const [billingState, setBillingState] = useState("");
     const [billingPincode, setBillingPincode] = useState("");
 
-    // Pine Labs redirects back with ?pl_order_id=...
-    const plOrderId = searchParams.get("pl_order_id");
-
-    const { data: notice, isLoading, error } = api.notice.getPublicDetails.useQuery(
-        { id: noticeId },
-        {
-            // Refetch when verification finishes
-            refetchOnWindowFocus: verificationResult === "SUCCESS",
-        }
-    );
-
-    // Synchronous Verification Effect
-    useEffect(() => {
-        if (plOrderId && noticeId && notice?.status !== "closed") {
-            const verifyOrder = async () => {
-                setIsVerifying(true);
-                try {
-                    const res = await fetch(`/api/pine-labs/verify?orderId=${plOrderId}&noticeId=${noticeId}`);
-                    if (!res.ok) {
-                        setVerificationResult("FAILED");
-                        return;
-                    }
-                    const data = (await res.json()) as { status: "SUCCESS" | "FAILED" | "PENDING" };
-                    setVerificationResult(data.status);
-
-                    if (data.status === "SUCCESS") {
-                        toast.success("Payment verified successfully!");
-                    } else if (data.status === "FAILED") {
-                        toast.error("Payment was not completed.");
-                    }
-                } catch (err) {
-                    console.error("[PayPage] Verification failed:", err);
-                    setVerificationResult("FAILED");
-                } finally {
-                    setIsVerifying(false);
-                }
-            };
-            void verifyOrder();
-        }
-    }, [plOrderId, noticeId, notice?.status]);
+    const { data: notice, isLoading, error } = api.notice.getPublicDetails.useQuery({ id: noticeId });
 
     // ── Loading ──────────────────────────────────────────────────────────────
-    if (isLoading || isVerifying) {
+    if (isLoading) {
         return (
             <div className="flex h-screen items-center justify-center bg-slate-50">
                 <div className="flex flex-col items-center gap-4">
                     <Loader2 className="h-12 w-12 animate-spin text-emerald-600" />
-                    <p className="text-sm font-medium text-slate-600 font-mono tracking-tight text-center">
-                        {isVerifying ? "VERIFYING PAYMENT STATUS..." : "SECURE PAYMENT CHANNEL INITIALIZING..."}
+                    <p className="text-sm font-medium text-slate-600 font-mono tracking-tight">
+                        SECURE PAYMENT CHANNEL INITIALIZING...
                     </p>
                 </div>
             </div>
@@ -121,52 +94,35 @@ export default function PublicPaymentPage() {
         );
     }
 
-    // ── Success State (returned from Pine Labs OR already closed) ────────────
-    if (notice.status === "closed" || verificationResult === "SUCCESS") {
+    // ── Already Paid ─────────────────────────────────────────────────────────
+    // Notice is closed in DB — prevent any further action
+    if (notice.status === "closed") {
         return (
             <div className="flex h-screen items-center justify-center bg-slate-50 p-6">
-                <div className="max-w-md w-full animate-in fade-in zoom-in duration-500">
-                    <div className="rounded-2xl bg-white p-8 shadow-2xl shadow-emerald-900/10 border border-emerald-50 text-center">
-                        <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100">
-                            <CheckCircle2 className="h-10 w-10 text-emerald-600" />
-                        </div>
-                        <h1 className="text-2xl font-bold text-slate-900 mb-2">Resolution Confirmed</h1>
-                        <p className="text-slate-600 mb-8 leading-relaxed">
-                            Payment for the demand from <strong>{notice.authority}</strong> was successfully
-                            processed via Pine Labs Plural.{" "}
-                            The notice has been marked as <strong>CLOSED</strong>.
-                        </p>
-                        <div className="space-y-3">
-                            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 text-sm">
-                                <span className="text-slate-500">Receipt Ref</span>
-                                <span className="font-mono font-bold text-slate-900">
-                                    PL-{noticeId.slice(-8).toUpperCase()}
-                                </span>
-                            </div>
-                            <div className="flex items-center justify-between rounded-lg bg-slate-50 p-3 text-sm">
-                                <span className="text-slate-500">Settlement Status</span>
-                                <Badge className="bg-emerald-600">Settled via Plural</Badge>
-                            </div>
-                            <Button
-                                variant="outline"
-                                className="w-full mt-4 flex items-center justify-center gap-2 border-emerald-600 text-emerald-600 hover:bg-emerald-50"
-                                onClick={() => window.open(`/api/notice/${noticeId}/audit-report`, "_blank")}
-                            >
-                                <Receipt className="h-4 w-4" />
-                                Download Full Audit Report
-                            </Button>
-                        </div>
-                        <p className="mt-8 text-xs text-slate-400">
-                            A formal receipt has been sent to your registered email and CA portal.
-                        </p>
+                <div className="max-w-md w-full text-center rounded-2xl bg-white p-8 shadow-2xl border border-emerald-50">
+                    <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-emerald-100">
+                        <CheckCircle2 className="h-10 w-10 text-emerald-600" />
                     </div>
+                    <h1 className="text-2xl font-bold text-slate-900 mb-2">Already Paid</h1>
+                    <p className="text-slate-600 mb-6 leading-relaxed">
+                        This notice from <strong>{notice.authority}</strong> has already been resolved and marked closed.
+                        No further payment is required.
+                    </p>
+                    <Button
+                        variant="outline"
+                        className="border-emerald-600 text-emerald-600 hover:bg-emerald-50"
+                        onClick={() => window.open(`/api/notice/${noticeId}/audit-report`, "_blank")}
+                    >
+                        View Audit Report
+                    </Button>
                 </div>
             </div>
         );
     }
 
     // ── Payment Failed / Cancelled State ─────────────────────────────────────
-    if (verificationResult === "FAILED") {
+    // Pine Labs redirected back with ?pl_status=FAILED
+    if (paymentFailed) {
         return (
             <div className="flex h-screen items-center justify-center bg-slate-50 p-6">
                 <div className="max-w-md w-full">
@@ -216,7 +172,7 @@ export default function PublicPaymentPage() {
                     billingAddress1,
                     billingCity,
                     billingState,
-                    billingPincode
+                    billingPincode,
                 }),
             });
 
@@ -226,10 +182,11 @@ export default function PublicPaymentPage() {
             }
 
             const data = (await res.json()) as { checkoutUrl: string; orderId: string };
-
             toast.success("Redirecting to secure checkout...", { id: toastId });
 
-            // Redirect to Pine Labs hosted checkout page
+            // Hand off to Pine Labs hosted checkout
+            // After payment, Pine Labs will POST to /api/pine-labs/callback
+            // which handles everything server-side and issues the final redirect.
             window.location.href = data.checkoutUrl;
         } catch (err) {
             console.error("[PayPage] Order creation failed:", err);
@@ -239,7 +196,7 @@ export default function PublicPaymentPage() {
             );
             setIsProcessing(false);
         }
-        // Note: don't reset isProcessing on success — redirect is in progress
+        // Note: do NOT reset isProcessing on success — the page will navigate away
     };
 
     return (
@@ -297,18 +254,18 @@ export default function PublicPaymentPage() {
                                 </div>
                             </div>
 
-                            {/* Payment Methods */}
+                            {/* Payment Method */}
                             <div className="space-y-3">
                                 <label className="text-[10px] font-bold text-slate-400 tracking-widest uppercase px-1">
-                                    Choose Payment Method
+                                    Payment Method
                                 </label>
-                                <div className="group relative border-2 border-indigo-600 bg-indigo-50/50 p-4 rounded-xl ring-2 ring-indigo-600/10 flex items-center justify-between">
+                                <div className="border-2 border-indigo-600 bg-indigo-50/50 p-4 rounded-xl ring-2 ring-indigo-600/10 flex items-center justify-between">
                                     <div className="flex items-center gap-4">
                                         <div className="h-10 w-10 bg-white rounded-lg shadow-sm border border-indigo-100 flex items-center justify-center">
                                             <Smartphone className="h-5 w-5 text-indigo-600" />
                                         </div>
                                         <div>
-                                            <p className="text-sm font-bold text-slate-900">UPI Only (GPay, PhonePe, Paytm)</p>
+                                            <p className="text-sm font-bold text-slate-900">UPI / Cards / Net Banking</p>
                                             <p className="text-[10px] text-slate-500">Powered by Pine Labs Plural 🛡️</p>
                                         </div>
                                     </div>
@@ -316,7 +273,7 @@ export default function PublicPaymentPage() {
                                 </div>
                             </div>
 
-                            {/* Billing Details Form */}
+                            {/* Billing Details Form — only shown when notice has no linked client */}
                             {!notice.clientId && (
                                 <div className="space-y-4 pt-6 border-t border-slate-100">
                                     <div className="flex items-center gap-2 mb-4">
@@ -328,41 +285,41 @@ export default function PublicPaymentPage() {
                                             <Label htmlFor="customerName" className="text-xs text-slate-500">Full Name</Label>
                                             <div className="relative">
                                                 <User className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <Input id="customerName" placeholder="John Doe" className="pl-9" value={customerName} onChange={(e) => setCustomerName(e.target.value)} required />
+                                                <Input id="customerName" placeholder="John Doe" className="pl-9" value={customerName} onChange={(e) => setCustomerName(e.target.value)} />
                                             </div>
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="customerPhone" className="text-xs text-slate-500">Phone Number</Label>
                                             <div className="relative">
                                                 <Phone className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <Input id="customerPhone" placeholder="9999999999" className="pl-9" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} required />
+                                                <Input id="customerPhone" placeholder="9999999999" className="pl-9" value={customerPhone} onChange={(e) => setCustomerPhone(e.target.value)} />
                                             </div>
                                         </div>
                                         <div className="space-y-2 md:col-span-2">
                                             <Label htmlFor="customerEmail" className="text-xs text-slate-500">Email Address</Label>
                                             <div className="relative">
                                                 <Mail className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <Input id="customerEmail" type="email" placeholder="john@example.com" className="pl-9" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} required />
+                                                <Input id="customerEmail" type="email" placeholder="john@example.com" className="pl-9" value={customerEmail} onChange={(e) => setCustomerEmail(e.target.value)} />
                                             </div>
                                         </div>
                                         <div className="space-y-2 md:col-span-2">
                                             <Label htmlFor="billingAddress1" className="text-xs text-slate-500">Street Address</Label>
                                             <div className="relative">
                                                 <MapPin className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                                                <Input id="billingAddress1" placeholder="123 Main St" className="pl-9" value={billingAddress1} onChange={(e) => setBillingAddress1(e.target.value)} required />
+                                                <Input id="billingAddress1" placeholder="123 Main St" className="pl-9" value={billingAddress1} onChange={(e) => setBillingAddress1(e.target.value)} />
                                             </div>
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="billingCity" className="text-xs text-slate-500">City</Label>
-                                            <Input id="billingCity" placeholder="Mumbai" value={billingCity} onChange={(e) => setBillingCity(e.target.value)} required />
+                                            <Input id="billingCity" placeholder="Mumbai" value={billingCity} onChange={(e) => setBillingCity(e.target.value)} />
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="billingState" className="text-xs text-slate-500">State</Label>
-                                            <Input id="billingState" placeholder="Maharashtra" value={billingState} onChange={(e) => setBillingState(e.target.value)} required />
+                                            <Input id="billingState" placeholder="Maharashtra" value={billingState} onChange={(e) => setBillingState(e.target.value)} />
                                         </div>
                                         <div className="space-y-2">
                                             <Label htmlFor="billingPincode" className="text-xs text-slate-500">Pincode</Label>
-                                            <Input id="billingPincode" placeholder="400001" value={billingPincode} onChange={(e) => setBillingPincode(e.target.value)} required />
+                                            <Input id="billingPincode" placeholder="400001" value={billingPincode} onChange={(e) => setBillingPincode(e.target.value)} />
                                         </div>
                                     </div>
                                 </div>
@@ -372,7 +329,7 @@ export default function PublicPaymentPage() {
 
                     <CardFooter className="p-8 pt-0 flex flex-col gap-4">
                         <Button
-                            className="w-full h-14 bg-slate-900 text-white text-lg font-bold rounded-xl shadow-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-80"
+                            className="w-full h-14 bg-slate-900 text-white text-lg font-bold rounded-xl shadow-xl hover:bg-slate-800 transition-all flex items-center justify-center gap-2 disabled:opacity-70"
                             onClick={handlePayment}
                             disabled={isProcessing}
                         >
@@ -396,11 +353,9 @@ export default function PublicPaymentPage() {
                     </CardFooter>
                 </Card>
 
-                <div className="mt-8 flex items-center justify-center gap-6">
-                    <div className="flex items-center gap-2">
-                        <ShieldCheck className="h-4 w-4 text-emerald-600" />
-                        <span className="text-xs font-bold text-slate-600 tracking-tighter uppercase">Fraud Protection Active</span>
-                    </div>
+                <div className="mt-8 flex items-center justify-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-emerald-600" />
+                    <span className="text-xs font-bold text-slate-600 tracking-tighter uppercase">Fraud Protection Active</span>
                 </div>
             </main>
 

@@ -222,6 +222,15 @@ export async function getOrderStatus(orderId: string): Promise<{
 
     const data = (await res.json()) as any;
 
+    // ── Diagnostic: log full raw response to identify exact status field ───
+    console.log(`[PineLabs] getOrderStatus raw response for ${orderId}:`, JSON.stringify({
+        status: data.status,
+        order_id: data.order_id,
+        merchant_order_reference: data.merchant_order_reference,
+        order_amount: data.order_amount,
+        payment_info: data.payment_info,
+    }));
+
     return {
         ...data,
         status: data.status,

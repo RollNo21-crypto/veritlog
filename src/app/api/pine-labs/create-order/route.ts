@@ -88,7 +88,8 @@ export async function POST(req: Request) {
         }
 
         // ── Build return & notify URLs ─────────────────────────────────────
-        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3001";
+        const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+        // Pine Labs substitutes {order_id} with the real order ID in the redirect URL
         const returnUrl = `${appUrl}/api/pine-labs/callback?noticeId=${noticeId}&pl_order_id={order_id}`;
         const notifyUrl = `https://abc-123.ngrok-free.app/api/pine-labs/webhook`;
 
