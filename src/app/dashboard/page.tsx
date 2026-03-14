@@ -57,7 +57,7 @@ export default function DashboardPage() {
                     highlight={!!stats?.reviewNeeded && stats.reviewNeeded > 0}
                 />
                 <StatCard
-                    title="High Risk"
+                    title="HIGH RISK"
                     value={stats?.highRisk}
                     icon={<AlertTriangle className="h-5 w-5 text-destructive" />}
                     loading={statsLoading}
@@ -149,7 +149,7 @@ export default function DashboardPage() {
                                     <p className="text-xs text-muted-foreground mt-1">{exposure.activeNoticeCount} active notices</p>
                                 </div>
                                 <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-4 text-center">
-                                    <p className="text-xs text-destructive uppercase tracking-wide mb-1 font-bold">High Risk</p>
+                                    <p className="text-xs text-destructive uppercase tracking-wide mb-1 font-bold">HIGH RISK</p>
                                     <p className="text-xl font-bold text-destructive">{fmt(exposure.highRiskRupees)}</p>
                                 </div>
                                 <div className="rounded-lg border border-yellow-500/30 bg-yellow-500/10 p-4 text-center">

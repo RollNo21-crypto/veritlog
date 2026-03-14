@@ -8,6 +8,13 @@
       "when": 1772131222782,
       "tag": "0000_massive_morlun",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1773338408190,
+      "tag": "0001_fair_serpent_society",
+      "breakpoints": true
     }
   ]
 }

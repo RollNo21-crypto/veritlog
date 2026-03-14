@@ -29,6 +29,7 @@ import {
     Loader2,
     Building2,
     Filter,
+    Smartphone,
 } from "lucide-react";
 import { Badge } from "~/components/ui/badge";
 import { Skeleton } from "~/components/ui/skeleton";
@@ -168,7 +169,7 @@ function SortableCard({
 
                 <div className="mt-2 flex flex-wrap items-center gap-1">
                     {notice.riskLevel === "high" && (
-                        <Badge variant="destructive" className="text-xs">High Risk</Badge>
+                        <Badge variant="destructive" className="text-xs">HIGH RISK</Badge>
                     )}
                     {notice.riskLevel === "medium" && (
                         <Badge variant="secondary" className="text-xs">Med Risk</Badge>
@@ -192,9 +193,20 @@ function SortableCard({
 
 
 
-                {/* Close button (only for non-closed) */}
+                {/* Action buttons (only for non-closed) */}
                 {notice.status !== "closed" && (
-                    <div className="mt-2 flex justify-end">
+                    <div className="mt-2 flex justify-between items-center">
+                        {notice.amount && (
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={(e) => { e.preventDefault(); e.stopPropagation(); window.location.href = `/pay/${notice.id}`; }}
+                                className="h-7 px-2 text-[10px] border-emerald-600/30 text-emerald-600 hover:bg-emerald-50 hover:text-emerald-700"
+                            >
+                                <Smartphone className="mr-1 h-3 w-3" />
+                                Pay
+                            </Button>
+                        )}
                         <button
                             className="flex items-center gap-1 rounded text-xs text-muted-foreground hover:text-destructive"
                             onClick={(e) => { e.stopPropagation(); onClose(notice); }}

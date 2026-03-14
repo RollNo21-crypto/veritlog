@@ -1,10 +1,11 @@
-import { pgTable, text, integer, timestamp, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, integer, timestamp, boolean, bigint, jsonb } from "drizzle-orm/pg-core";
 
 // ─── Tenants (CA Firms) ───────────────────────────────────────────────────────
 export const tenants = pgTable("tenants", {
     id: text("id").primaryKey(), // Clerk Org ID
     name: text("name").notNull(),
     plan: text("plan").notNull().default("free"),
+    complianceScore: integer("compliance_score").default(100).notNull(), // Pine Labs compliance health score
     createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
@@ -42,7 +43,7 @@ export const notices = pgTable("notices", {
     // AI-extracted fields
     authority: text("authority"),
     noticeType: text("notice_type"),
-    amount: integer("amount"), // stored in paise (×100)
+    amount: bigint("amount", { mode: "number" }), // stored in paise (×100)
     deadline: text("deadline"), // ISO date string
     section: text("section"),
     financialYear: text("financial_year"),
@@ -56,6 +57,7 @@ export const notices = pgTable("notices", {
 
     // Workflow
     status: text("status").notNull().default("processing"),
+    isEscalated: boolean("is_escalated").notNull().default(false), // Track if WhatsApp alert was sent
     // "processing" | "review_needed" | "verified" | "in_progress" | "closed" | "approval_pending" | "approved"
     hasTemplateIssue: boolean("has_template_issue").notNull().default(false),
     isDuplicate: boolean("is_duplicate").notNull().default(false),
@@ -109,6 +111,23 @@ export const attachments = pgTable("attachments", {
     createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
+// ─── Payments (Detailed transaction logs) ─────────────────────────────────────
+export const payments = pgTable("payments", {
+    id: text("id").primaryKey(),
+    noticeId: text("notice_id")
+        .notNull()
+        .references(() => notices.id),
+    tenantId: text("tenant_id")
+        .notNull()
+        .references(() => tenants.id),
+    orderId: text("order_id").notNull(), // Pine Labs order ID
+    amount: bigint("amount", { mode: "number" }).notNull(),
+    status: text("status").notNull(),
+    paymentMethod: text("payment_method"),
+    rawResponse: jsonb("raw_response"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 // ─── Audit Logs (Immutable, append-only) ──────────────────────────────────────
 export const auditLogs = pgTable("audit_logs", {
     id: text("id").primaryKey(),
@@ -118,8 +137,8 @@ export const auditLogs = pgTable("audit_logs", {
     userId: text("user_id").notNull(),
     action: text("action").notNull(),
     // "notice.created" | "notice.updated" | "notice.verified" | "notice.assigned"
-    // "notice.closed" | "notice.viewed" | "comment.added" | "attachment.added"
-    entityType: text("entity_type").notNull(), // "notice" | "client" | "attachment"
+    // "notice.closed" | "notice.viewed" | "comment.added" | "attachment.added" | "payment.recorded"
+    entityType: text("entity_type").notNull(), // "notice" | "client" | "attachment" | "payment"
     entityId: text("entity_id").notNull(),
     previousValue: text("previous_value"), // JSON string of old values
     newValue: text("new_value"), // JSON string of new values

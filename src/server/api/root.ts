@@ -5,6 +5,7 @@ import { commentRouter } from "~/server/api/routers/comment";
 import { auditRouter } from "~/server/api/routers/audit";
 import { statsRouter } from "~/server/api/routers/stats";
 import { membersRouter } from "~/server/api/routers/members";
+import { tenantRouter } from "~/server/api/routers/tenant";
 import { createCallerFactory, createTRPCRouter } from "~/server/api/trpc";
 
 /**
@@ -20,6 +21,7 @@ export const appRouter = createTRPCRouter({
   audit: auditRouter,
   stats: statsRouter,
   members: membersRouter,
+  tenant: tenantRouter,
 });
 
 // export type definition of API

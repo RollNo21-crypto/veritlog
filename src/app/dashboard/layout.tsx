@@ -13,6 +13,7 @@ import {
     X,
     Activity,
     Shield,
+    ShieldCheck,
     Building2,
     Users,
 } from "lucide-react";
@@ -39,6 +40,7 @@ export default function DashboardLayout({
 
     // Fetch dynamic stats for badges
     const { data: stats } = api.notice.stats.useQuery(undefined, { refetchInterval: 30000 });
+    const { data: tenant } = api.tenant.getMyTenant.useQuery(undefined, { refetchInterval: 60000 });
 
     const navigation = [
         { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -167,6 +169,21 @@ export default function DashboardLayout({
                     </div>
 
                     <div className="flex flex-1 items-center gap-4 lg:justify-end lg:flex-none ml-auto">
+                        {/* Pine Labs Compliance Score Badge */}
+                        {tenant?.complianceScore !== undefined && (
+                            <div
+                                className={`hidden sm:flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-bold ${tenant.complianceScore >= 80
+                                    ? "border-green-500/30 bg-green-500/10 text-green-600 dark:text-green-400"
+                                    : tenant.complianceScore >= 50
+                                        ? "border-yellow-500/30 bg-yellow-500/10 text-yellow-600 dark:text-yellow-400"
+                                        : "border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400"
+                                    }`}
+                                title="Pine Labs Compliance Health Score"
+                            >
+                                <ShieldCheck className="h-3.5 w-3.5" />
+                                <span>Pine Labs Score: {tenant.complianceScore}/100</span>
+                            </div>
+                        )}
                         <DarkModeToggle />
                         <NotificationBell />
                         <div className="border-l border-border h-8 mx-2" />

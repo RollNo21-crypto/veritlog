@@ -38,7 +38,7 @@ export async function GET(req: NextRequest) {
 
         // Trigger WhatsApp Alert to CA if new emails were successfully ingested
         if (result.processed > 0) {
-            void sendNewEmailAlertToCA(result.processed);
+            await sendNewEmailAlertToCA(result.processed);
         }
 
         console.log("──────────────────────────────────────────────────");

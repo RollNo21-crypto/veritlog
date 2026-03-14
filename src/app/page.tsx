@@ -2,6 +2,7 @@ import { SignedIn, SignedOut, SignInButton } from "@clerk/nextjs";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ArrowRight, FileText, Zap, Shield, BarChart3 } from "lucide-react";
+import { PricingSection } from "~/components/landing/pricing-section";
 
 export default function HomePage() {
   return (
@@ -89,8 +90,10 @@ export default function HomePage() {
               })}
             </div>
 
+            <PricingSection />
+
             {/* CTA Section - Mobile First */}
-            <div className="mx-auto mt-12 max-w-3xl rounded-2xl border border-primary/20 bg-primary/5 p-8 text-center sm:mt-16 sm:p-10 md:mt-20 md:p-12">
+            <div className="mx-auto mt-24 max-w-3xl rounded-2xl border border-primary/20 bg-primary/5 p-8 text-center sm:p-10 md:p-12">
               <h2 className="mb-3 text-2xl font-bold text-foreground sm:text-3xl md:mb-4 md:text-4xl">
                 Ready to transform your notice management?
               </h2>

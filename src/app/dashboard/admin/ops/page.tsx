@@ -131,7 +131,7 @@ export default function OpsDashboardPage() {
                     iconColor={stats.globalAccuracy >= 80 ? "text-green-500" : stats.globalAccuracy >= 50 ? "text-amber-500" : "text-destructive"}
                 />
                 <KpiCard
-                    label="High Risk Notices"
+                    label="HIGH RISK Notices"
                     value={high}
                     sub={`${Math.round((high / riskTotal) * 100)}% of total`}
                     icon={AlertTriangle}
